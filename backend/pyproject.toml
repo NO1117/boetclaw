@@ -1,0 +1,49 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests", "scripts"]
+
+[tool.ruff.lint]
+# Minimal maintainable gate: correctness + obvious bugs. Style churn is out of scope.
+select = [
+  "E9",   # runtime syntax errors
+  "F63",  # invalid print
+  "F7",   # syntax errors related to statements
+  "F82",  # undefined names
+  "F401", # unused imports
+  "F811", # redefined while unused
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401"]
+"scripts/**" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+ignore_missing_imports = true
+warn_unused_configs = true
+# Soft but real gate: allow legacy untyped defs; still catch no-redef / clear type bugs.
+check_untyped_defs = false
+allow_untyped_defs = true
+allow_incomplete_defs = true
+disable_error_code = [
+  "annotation-unchecked",
+  "var-annotated",
+  "assignment",
+  "attr-defined",
+  "arg-type",
+  "return-value",
+  "union-attr",
+  "misc",
+  "no-any-return",
+  "index",
+  "call-arg",
+  "operator",
+  "list-item",
+  "dict-item",
+  "override",
+  "type-arg",
+  "call-overload",
+]

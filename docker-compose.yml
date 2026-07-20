@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend-runtime
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: backend/.env.example
+      - path: backend/.env
+        required: false
+    volumes:
+      - ./backend/workspace:/app/workspace
+      - ./backend/skills:/app/skills
+      - ./backend/plugins_ext:/app/plugins_ext
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      target: frontend-runtime
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama:

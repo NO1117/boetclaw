@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Node
+node_modules/
+*.tsbuildinfo
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
+# Workspace outputs (runtime; recreated on startup / via Docker)
+workspace/
+backend/workspace/
+
+# Test / CI artifacts
+.pytest_cache/
+ci-artifacts/
+*.log
+
+# Local agent / IDE
+.claude/
+.cursor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

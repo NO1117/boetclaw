@@ -1,0 +1,8 @@
+{
+  "name": "example_echo",
+  "version": "0.1.0",
+  "plugin_type": "tool",
+  "description": "示例插件：提供一个回显工具（默认不启用）",
+  "entry": "plugin.py",
+  "author": "boetclaw"
+}

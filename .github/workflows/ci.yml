@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # Clean CI environment — never reuse developer .venv / workspace state.
+  CI: "true"
+
+jobs:
+  backend:
+    name: Backend (pytest / lint / type / OpenAPI)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: python -m ruff check app tests scripts
+
+      - name: Mypy (soft gate)
+        run: python -m mypy app --config-file pyproject.toml
+
+      - name: OpenAPI breaking check
+        env:
+          PYTHONPATH: .
+        run: python scripts/check_openapi_breaking.py
+
+      - name: Pytest
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p ../ci-artifacts/backend
+          python -m pytest -q --junitxml=../ci-artifacts/backend/pytest-junit.xml
+
+      - name: Upload backend logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-ci-logs
+          path: |
+            ci-artifacts/backend/
+            backend/.pytest_cache/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend (test / coverage / build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Coverage gate
+        run: npm run test:coverage
+
+      - name: Production build
+        run: npm run build
+
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  e2e:
+    name: Playwright E2E (chromium / fake Provider)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E (default gate)
+        run: npm run test:e2e
+        # Real Provider / channel suite (test:e2e:manual) is intentionally NOT in CI.
+
+      - name: Upload E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  compose:
+    name: Docker Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+  security:
+    name: Security (pip-audit / npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: pip-audit (runtime deps)
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pip-audit
+          mkdir -p ../ci-artifacts/security
+          python -m pip_audit -r requirements.txt --progress-spinner off \
+            | tee ../ci-artifacts/security/pip-audit.txt
+
+      - name: npm audit (production)
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npm ci
+          mkdir -p ../ci-artifacts/security
+          npm audit --omit=dev --audit-level=high \
+            | tee ../ci-artifacts/security/npm-audit.txt
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit
+          path: ci-artifacts/security/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Optional secret scan — non-blocking by default (document before making required).
+  gitleaks:
+    name: Gitleaks (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
