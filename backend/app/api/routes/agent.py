@@ -27,6 +27,12 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 SSE_VERSION = "1"
 
 
+def _http_error(exc: ChatPreparationError) -> HTTPException:
+    if exc.detail:
+        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
 def _sse_envelope(prepared: PreparedChat, event: str, data: object) -> dict:
     return {
         "event": event,
@@ -105,9 +111,9 @@ async def chat(request: Request, body: ChatRequest):
             source=prepared.source,
             attachment_refs=prepared.attachment_refs,
         )
-        return ChatResponse(**result)
+        return ChatResponse(**{k: v for k, v in result.items() if k in ChatResponse.model_fields})
     except ChatPreparationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _http_error(exc) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -160,7 +166,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             model=body.model,
         )
     except ChatPreparationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _http_error(exc) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -202,6 +208,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                     run_id=prepared.run_id,
                     user_content=prepared.user_content,
                     model_string=prepared.model_string,
+                    attachment_count=len(prepared.attachment_summaries),
+                    retrieval_hits=prepared.retrieval_hits,
                 ):
                     if event.pop("kind") == "update":
                         yield _sse(prepared, "update", event)
@@ -226,6 +234,7 @@ async def chat_stream(request: Request, body: ChatRequest):
                     {
                         "response": result.get("response", ""),
                         "interrupted": bool(result.get("interrupted")),
+                        "run_metrics": result.get("run_metrics"),
                     },
                 )
         except Exception as exc:
@@ -234,6 +243,16 @@ async def chat_stream(request: Request, body: ChatRequest):
             reset_lang(lang_token)
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/runs/metrics/{trace_id}")
+async def get_run_metrics(trace_id: str):
+    from app.services.run_metrics import run_metrics_tracker
+
+    summary = run_metrics_tracker.get(trace_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="run metrics not found")
+    return summary.to_dict()
 
 
 @router.post("/runs/cancel", response_model=RunCancelResponse)

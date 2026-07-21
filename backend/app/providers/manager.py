@@ -54,6 +54,9 @@ class ProviderManager:
     def list_models(self, name: str) -> list[ModelInfo]:
         return self.get(name).list_models()
 
+    def list_enriched_models(self, name: str) -> list[dict]:
+        return [m.to_dict() for m in self.get(name).list_enriched_models()]
+
     def check_connection(self, name: str) -> dict[str, Any]:
         return self.get(name).check_connection()
 

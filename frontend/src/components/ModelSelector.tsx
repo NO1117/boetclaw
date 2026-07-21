@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, HelpCircle, Loader2 } from 'lucide-react'
 import {
   fetchDefaultProviderConfig,
   fetchProviderModels,
@@ -7,30 +7,60 @@ import {
   type ModelInfo,
   type ProviderInfo,
 } from '../services/api'
+import {
+  capabilityTags,
+  checkModelCompatibility,
+  deriveInputRequirements,
+} from '../utils/modelCapabilities'
+import './RunMetricsCard.css'
 
 export interface ModelSelection {
   provider: string
   model: string
-  supportsVision: boolean
+  supportsVision: boolean | null
   label: string
+}
+
+interface PendingAttachment {
+  kind: string
 }
 
 interface ModelSelectorProps {
   value: ModelSelection | null
   onChange: (selection: ModelSelection | null) => void
   disabled?: boolean
+  pendingAttachments?: PendingAttachment[]
 }
 
 function buildLabel(provider: string, model: string): string {
   return `${provider} / ${model}`
 }
 
-export default function ModelSelector({ value, onChange, disabled }: ModelSelectorProps) {
+function visionKnown(model: ModelInfo): boolean | null {
+  const caps = model.capabilities?.vision
+  if (caps === 'true') return true
+  if (caps === 'false') return false
+  if (model.supports_vision === true) return true
+  if (model.supports_vision === false) return false
+  return null
+}
+
+export default function ModelSelector({
+  value,
+  onChange,
+  disabled,
+  pendingAttachments = [],
+}: ModelSelectorProps) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelInfo[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
+
+  const requirements = useMemo(
+    () => deriveInputRequirements(pendingAttachments),
+    [pendingAttachments],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -65,10 +95,11 @@ export default function ModelSelector({ value, onChange, disabled }: ModelSelect
             ?? provider?.default_model
             ?? models[0]?.name
           if (provider && model) {
+            const info = models.find(m => m.name === model)
             onChange({
               provider: provider.name,
               model,
-              supportsVision: models.find(m => m.name === model)?.supports_vision ?? false,
+              supportsVision: info ? visionKnown(info) : null,
               label: buildLabel(provider.display_name || provider.name, model),
             })
           }
@@ -83,34 +114,41 @@ export default function ModelSelector({ value, onChange, disabled }: ModelSelect
     return () => { cancelled = true }
   }, [])
 
-  const currentModels = useMemo(
-    () => (value ? modelsByProvider[value.provider] ?? [] : []),
-    [modelsByProvider, value],
-  )
+  const flatModels = useMemo(() => {
+    const items: Array<{ provider: ProviderInfo; model: ModelInfo }> = []
+    for (const provider of providers) {
+      for (const model of modelsByProvider[provider.name] ?? []) {
+        items.push({ provider, model })
+      }
+    }
+    return items
+  }, [providers, modelsByProvider])
 
-  const handleProviderChange = (providerName: string) => {
-    const models = modelsByProvider[providerName] ?? []
+  const compatibilityMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof checkModelCompatibility>>()
+    for (const { provider, model } of flatModels) {
+      map.set(`${provider.name}:${model.name}`, checkModelCompatibility(model, requirements))
+    }
+    return map
+  }, [flatModels, requirements])
+
+  const inputAlert = requirements.imageCount > 0
+    ? `已检测到 ${requirements.imageCount} 张图片 · 需要视觉理解能力`
+    : ''
+
+  const selectModel = (providerName: string, modelName: string) => {
+    const model = (modelsByProvider[providerName] ?? []).find(m => m.name === modelName)
     const provider = providers.find(p => p.name === providerName)
-    const model = models[0]?.name ?? provider?.default_model ?? ''
     if (!model) return
+    const compat = compatibilityMap.get(`${providerName}:${modelName}`)
+    if (compat?.status === 'incompatible') return
     onChange({
       provider: providerName,
-      model,
-      supportsVision: models[0]?.supports_vision ?? false,
-      label: buildLabel(provider?.display_name || providerName, model),
-    })
-  }
-
-  const handleModelChange = (modelName: string) => {
-    if (!value) return
-    const model = currentModels.find(m => m.name === modelName)
-    const provider = providers.find(p => p.name === value.provider)
-    onChange({
-      provider: value.provider,
       model: modelName,
-      supportsVision: model?.supports_vision ?? false,
-      label: buildLabel(provider?.display_name || value.provider, modelName),
+      supportsVision: visionKnown(model),
+      label: buildLabel(provider?.display_name || providerName, modelName),
     })
+    setOpen(false)
   }
 
   if (loading) {
@@ -138,50 +176,87 @@ export default function ModelSelector({ value, onChange, disabled }: ModelSelect
     )
   }
 
+  const currentCompat = compatibilityMap.get(`${value.provider}:${value.model}`)
+
   return (
-    <div className={`model-selector${open ? ' open' : ''}`}>
-      <button
-        type="button"
-        className="model-selector-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="选择模型"
-        disabled={disabled}
-        onClick={() => setOpen(v => !v)}
-      >
-        <span className="mono">{value.label}</span>
-        {value.supportsVision ? <Eye size={14} aria-label="支持视觉" /> : <EyeOff size={14} aria-label="不支持视觉" />}
-        <ChevronDown size={14} aria-hidden />
-      </button>
+    <div className={`model-selector-wrap${open ? ' open' : ''}`}>
+      <div className={`model-selector${open ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="model-selector-trigger"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label="选择模型"
+          disabled={disabled}
+          onClick={() => setOpen(v => !v)}
+        >
+          <span className="mono">{value.label}</span>
+          {value.supportsVision === true ? (
+            <Eye size={14} aria-label="支持视觉" />
+          ) : value.supportsVision === false ? (
+            <EyeOff size={14} aria-label="不支持视觉" />
+          ) : (
+            <HelpCircle size={14} aria-label="视觉能力未知" />
+          )}
+          <ChevronDown size={14} aria-hidden />
+        </button>
+      </div>
+
       {open && (
-        <div className="model-selector-menu" role="listbox" aria-label="Provider 与模型">
-          <label className="model-selector-field">
-            <span>Provider</span>
-            <select
-              value={value.provider}
-              onChange={e => handleProviderChange(e.target.value)}
-              aria-label="Provider"
-            >
-              {providers.map(provider => (
-                <option key={provider.name} value={provider.name}>{provider.display_name || provider.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="model-selector-field">
-            <span>Model</span>
-            <select
-              value={value.model}
-              onChange={e => handleModelChange(e.target.value)}
-              aria-label="Model"
-            >
-              {currentModels.map(model => (
-                <option key={model.name} value={model.name}>
-                  {model.name}{model.supports_vision ? ' · vision' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="model-selector-hint">模型切换仅影响后续消息，不会修改全局默认配置。</p>
+        <div className="model-selector-panel" role="listbox" aria-label="模型能力选择">
+          <div className="model-selector-title">选择适合当前输入的模型</div>
+          {inputAlert && <div className="model-selector-alert">{inputAlert}</div>}
+
+          {flatModels.map(({ provider, model }) => {
+            const key = `${provider.name}:${model.name}`
+            const compat = compatibilityMap.get(key)!
+            const selected = value.provider === provider.name && value.model === model.name
+            const tags = capabilityTags(model)
+            const tagClass = compat.status === 'unknown_risk'
+              ? 'model-option-tags unknown'
+              : compat.status === 'incompatible'
+                ? 'model-option-tags muted'
+                : 'model-option-tags'
+
+            return (
+              <button
+                key={key}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                disabled={compat.status === 'incompatible'}
+                aria-disabled={compat.status === 'incompatible'}
+                className={`model-option${selected ? ' selected' : ''}${compat.status === 'incompatible' ? ' incompatible' : ''}`}
+                onClick={() => selectModel(provider.name, model.name)}
+              >
+                <div className="model-option-name">
+                  {model.name}{selected ? '  ✓ 当前选择' : ''}
+                </div>
+                <div className={tagClass}>{tags.join('   ')}</div>
+                <div className={`model-option-reason${
+                  compat.status === 'incompatible' ? ' error' : compat.status === 'unknown_risk' ? ' warn' : ''
+                }`}>
+                  {compat.reason}
+                </div>
+              </button>
+            )
+          })}
+
+          {requirements.imageCount > 0 && (
+            <div className="model-selector-guidance">
+              <div className="model-selector-guidance-title">提示</div>
+              <div className="model-selector-guidance-body">
+                移除图片后，所有文本模型会重新变为可选。
+              </div>
+            </div>
+          )}
+
+          {currentCompat?.status === 'unknown_risk' && (
+            <div className="model-selector-guidance">
+              <div className="model-selector-guidance-title">兼容性风险</div>
+              <div className="model-selector-guidance-body">{currentCompat.reason}</div>
+            </div>
+          )}
         </div>
       )}
     </div>

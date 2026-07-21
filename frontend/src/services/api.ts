@@ -1027,9 +1027,43 @@ export interface ProviderInfo {
 export interface ModelInfo {
   name: string
   provider: string
-  context_window: number
-  supports_tools: boolean
-  supports_vision: boolean
+  context_window: number | null
+  max_output_tokens?: number | null
+  supports_tools: boolean | null
+  supports_vision: boolean | null
+  capabilities?: Record<'vision' | 'tools' | 'audio_input' | 'audio_output' | 'structured_output' | 'is_local', 'true' | 'false' | 'unknown'>
+  capability_sources?: Record<string, string>
+  pricing?: {
+    input_per_million?: number | null
+    output_per_million?: number | null
+  }
+  metadata?: Record<string, unknown>
+}
+
+export interface RunMetricsSummary {
+  trace_id: string
+  run_id: string
+  agent_id?: string
+  provider?: string | null
+  model?: string | null
+  status?: string
+  time_to_first_token_ms?: number | null
+  total_duration_ms?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  estimated_cost?: number | null
+  cost_currency?: string | null
+  cost_is_estimate?: boolean
+  graph_cache_hit?: boolean | null
+  attachment_count?: number
+  retrieval_hits?: number
+}
+
+export async function fetchRunMetrics(traceId: string): Promise<RunMetricsSummary> {
+  const res = await fetch(`${API_BASE}/agent/runs/metrics/${encodeURIComponent(traceId)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
 }
 
 export interface ProviderConfig {

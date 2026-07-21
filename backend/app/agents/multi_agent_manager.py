@@ -145,6 +145,9 @@ class MultiAgentManager:
                 ws.agent = await asyncio.to_thread(self._build_agent, ws)
                 ws.last_access = time.time()
                 logger.info("workspace_reloaded", agent_id=agent_id)
+            from app.agents.graph_cache import get_graph_cache
+
+            get_graph_cache().invalidate_agent(agent_id)
             return {"agent_id": agent_id, "reloaded": was_loaded, "loaded": ws.agent is not None}
 
     async def reload_loaded_agents(self) -> list[dict[str, Any]]:
@@ -170,6 +173,9 @@ class MultiAgentManager:
 
         in_memory = agent_id in self._ws
         self._ws.pop(agent_id, None)
+        from app.agents.graph_cache import get_graph_cache
+
+        get_graph_cache().invalidate_agent(agent_id)
         root = self._root / agent_id
         exists_on_disk = root.is_dir()
         tombstoned = exists_on_disk and self.is_tombstoned(agent_id)

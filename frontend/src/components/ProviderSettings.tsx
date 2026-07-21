@@ -187,7 +187,7 @@ export default function ProviderSettings() {
                   <h4>{m.name}</h4>
                   <p>
                     上下文 {m.context_window || '—'} · 工具 {m.supports_tools ? '✓' : '✗'} · 视觉{' '}
-                    {m.supports_vision ? '✓' : '✗'}
+                    {m.supports_vision === true ? '✓' : m.supports_vision === false ? '✗' : '?'}
                   </p>
                 </div>
               </div>

@@ -143,6 +143,46 @@ test.describe('chat / plan / approval / cancel', () => {
   })
 })
 
+async function attachImageFile(page: import('@playwright/test').Page, filename: string) {
+  await expect(page.getByRole('button', { name: '添加图片' })).toBeVisible()
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  await page.locator('input[accept="image/*"]').setInputFiles({
+    name: filename,
+    mimeType: 'image/png',
+    buffer: png,
+  })
+}
+
+test.describe('model capability and run metrics', () => {
+  test('图片附件时 text-pro 不可选', async ({ page, fakeBackend: _fakeBackend }) => {
+    await page.goto('/chat')
+    await expect(page.getByRole('heading', { name: 'BoetClaw Agent 工作台' })).toBeVisible()
+    await attachImageFile(page, 'screenshot.png')
+    await expect(page.getByText('screenshot.png')).toBeVisible()
+    await page.getByLabel('选择模型').click()
+    await expect(page.getByText('已检测到 1 张图片 · 需要视觉理解能力')).toBeVisible()
+    await expect(page.getByRole('option', { name: /text-pro/ })).toBeDisabled()
+    await expect(page.getByText('不可选：当前图片需要视觉能力')).toBeVisible()
+  })
+
+  test('兼容模型发送后展示本次运行指标', async ({ page, fakeBackend }) => {
+    await page.goto('/chat')
+    await attachTextFile(page, 'metrics.txt', 'metrics fixture')
+    await expect(page.getByRole('button', { name: '发送消息' })).toBeEnabled({ timeout: 15_000 })
+    await page.getByLabel('消息输入').fill('读取指标')
+    await page.getByRole('button', { name: '发送消息' }).click()
+    await expect(page.getByText('echo:default:读取指标:attachment_ids=1')).toBeVisible()
+    await expect(page.getByLabel('本次运行')).toBeVisible()
+    await expect(page.getByText('● 已完成')).toBeVisible()
+    await expect(page.getByText(/首字 800ms/)).toBeVisible()
+    await expect(page.getByText(/输入 3,842/)).toBeVisible()
+    expect(fakeBackend.lastChatBody?.provider).toBe('fake')
+  })
+})
+
 test.describe('routing and agent workspace', () => {
   test('旧领域路由显示已移除提示', async ({ page }) => {
     await page.goto('/wells')

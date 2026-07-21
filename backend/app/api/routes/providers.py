@@ -64,6 +64,9 @@ async def update_default_provider(body: DefaultProviderUpdate):
     settings.llm_provider = body.provider
     settings.llm_model = body.model
     update_env_file({"LLM_PROVIDER": body.provider, "LLM_MODEL": body.model}, PROVIDER_ENV_PATH)
+    from app.agents.graph_cache import get_graph_cache
+
+    get_graph_cache().invalidate_all()
     return {"provider": settings.llm_provider, "model": settings.llm_model}
 
 
@@ -106,13 +109,16 @@ async def update_provider_config(name: str, body: ProviderConfigUpdate):
         if body.base_url is not None:
             settings.ollama_base_url = body.base_url
             update_env_file({"OLLAMA_BASE_URL": body.base_url}, PROVIDER_ENV_PATH)
+    from app.agents.graph_cache import get_graph_cache
+
+    get_graph_cache().invalidate_provider(name)
     return _provider_config(name)
 
 
 @router.get("/{name}/models")
 async def list_models(name: str):
     try:
-        return {"models": [m.to_dict() for m in provider_manager.list_models(name)]}
+        return {"models": provider_manager.list_enriched_models(name)}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -78,6 +78,10 @@ def attachment_app(tmp_path, monkeypatch):
     monkeypatch.setattr(BoetClawAgentFactory, "build", staticmethod(tracking_build))
     monkeypatch.setattr(session_store, "root", tmp_path / "sessions")
 
+    from app.agents.graph_cache import get_graph_cache
+
+    get_graph_cache().invalidate_all()
+
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     return app, cached_agent, override_agents, factory_builds, get_model_calls, settings
@@ -221,7 +225,13 @@ async def test_non_vision_model_rejects_images(attachment_app, monkeypatch):
             },
         )
     assert response.status_code == 400
-    assert "不支持图像" in response.text
+    body = response.json()
+    detail = body.get("detail", body)
+    if isinstance(detail, dict):
+        assert detail.get("error_code") == "MODEL_INCOMPATIBLE"
+        assert "vision" in detail.get("missing_capabilities", [])
+    else:
+        assert "视觉" in response.text
 
 
 @pytest.mark.asyncio

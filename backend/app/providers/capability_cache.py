@@ -29,11 +29,29 @@ class CapabilityCache:
         self._path.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def get(self, model_key: str, cap: str, default: Any = None) -> Any:
-        return self._data.get(model_key, {}).get(cap, default)
+        entry = self._data.get(model_key, {})
+        caps = entry.get("capabilities", entry)
+        return caps.get(cap, default)
 
     def learn(self, model_key: str, cap: str, value: Any) -> None:
         with self._lock:
-            self._data.setdefault(model_key, {})[cap] = value
+            entry = self._data.setdefault(model_key, {"capabilities": {}, "sources": {}, "updated_at": {}})
+            entry.setdefault("capabilities", {})[cap] = value
+            self._persist()
+
+    def learn_entry(
+        self,
+        model_key: str,
+        capabilities: dict[str, Any],
+        sources: dict[str, str],
+        updated_at: dict[str, str],
+    ) -> None:
+        with self._lock:
+            self._data[model_key] = {
+                "capabilities": dict(capabilities),
+                "sources": dict(sources),
+                "updated_at": dict(updated_at),
+            }
             self._persist()
 
     def all(self) -> dict[str, dict[str, Any]]:

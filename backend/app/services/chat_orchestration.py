@@ -14,6 +14,11 @@ from app.core.config import settings
 from app.core.observability import new_run_id, new_trace_id
 from app.i18n import lang_from_headers
 from app.memory.context_policy import normalize_source
+from app.providers.compatibility import (
+    ModelCompatibilityError,
+    check_model_compatibility,
+    derive_input_requirements,
+)
 from app.providers.manager import provider_manager
 from app.providers.rate_limiter import ProviderRateLimitError
 from app.services.chat_attachments import (
@@ -27,9 +32,18 @@ from app.services.run_registry import run_registry
 
 
 class ChatPreparationError(ValueError):
-    def __init__(self, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 400,
+        *,
+        error_code: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.error_code = error_code
+        self.detail = detail or {}
 
 
 @dataclass(frozen=True)
@@ -46,6 +60,7 @@ class PreparedChat:
     history_user_message: str
     attachment_summaries: list[AttachmentSummary]
     attachment_refs: list[dict[str, Any]]
+    retrieval_hits: int = 0
     provider_override: str | None = None
     model_override: str | None = None
     model_string: str | None = None
@@ -82,15 +97,29 @@ def _resolve_model_override(provider: str | None, model: str | None) -> tuple[st
     return provider_name, model_name, model_string
 
 
-def _assert_vision_capability(provider: str, model: str) -> None:
-    for info in provider_manager.list_models(provider):
-        if info.name == model:
-            if not info.supports_vision:
-                raise ChatPreparationError(
-                    f"模型 {provider}/{model} 不支持图像输入，请更换模型或移除图片附件",
-                )
-            return
-    raise ChatPreparationError(f"未知模型: {provider}/{model}")
+def _assert_model_compatibility(
+    provider: str,
+    model: str,
+    *,
+    has_images: bool,
+    image_count: int,
+    attachment_count: int,
+    document_count: int,
+) -> None:
+    requirements = derive_input_requirements(
+        has_images=has_images,
+        image_count=image_count,
+        attachment_count=attachment_count,
+        document_count=document_count,
+    )
+    result = check_model_compatibility(provider, model, requirements)
+    if result.status == "incompatible":
+        raise ModelCompatibilityError(
+            result.reason,
+            missing_capabilities=result.missing_capabilities,
+            provider=provider,
+            model=model,
+        )
 
 
 async def prepare_chat(
@@ -155,11 +184,34 @@ async def prepare_chat(
     except AttachmentValidationError as exc:
         raise ChatPreparationError(str(exc), exc.status_code) from exc
 
-    if resolved.has_images and provider_override and model_override:
-        _assert_vision_capability(provider_override, model_override)
-    elif resolved.has_images and not provider_override:
-        default_provider, default_model = provider_manager.parse_model_string(settings.model_string)
-        _assert_vision_capability(default_provider, default_model)
+    image_count = sum(1 for s in resolved.summaries if getattr(s, "kind", "") == "image")
+    if not image_count and resolved.has_images:
+        image_count = 1
+    document_count = sum(1 for s in resolved.summaries if getattr(s, "kind", "") in {"text", "document"})
+    attachment_count = len(resolved.summaries) or len(attachment_ids or []) or len(attachment_inputs)
+    retrieval_hits = int((resolved.retrieval_trace or {}).get("hits", 0) or 0)
+
+    effective_provider = provider_override
+    effective_model = model_override
+    if not effective_provider:
+        effective_provider, effective_model = provider_manager.parse_model_string(settings.model_string)
+
+    try:
+        _assert_model_compatibility(
+            effective_provider,
+            effective_model,
+            has_images=resolved.has_images,
+            image_count=image_count,
+            attachment_count=attachment_count,
+            document_count=document_count,
+        )
+    except ModelCompatibilityError as exc:
+        raise ChatPreparationError(
+            str(exc),
+            exc.status_code,
+            error_code=exc.error_code,
+            detail=exc.to_detail(),
+        ) from exc
 
     command_message = message.strip() or message
     command = command_registry.execute(
@@ -198,6 +250,7 @@ async def prepare_chat(
         history_user_message=resolved.history_text,
         attachment_summaries=resolved.summaries,
         attachment_refs=list(resolved.attachment_refs),
+        retrieval_hits=retrieval_hits,
         provider_override=provider_override,
         model_override=model_override,
         model_string=model_string,

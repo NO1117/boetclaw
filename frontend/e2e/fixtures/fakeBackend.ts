@@ -302,13 +302,75 @@ export async function installFakeBackend(
     }
     if (path.endsWith('/providers/fake/models')) {
       return json(route, {
-        models: [{
-          name: 'fake-model',
-          provider: 'fake',
-          context_window: 128000,
-          supports_tools: true,
-          supports_vision: true,
-        }],
+        models: [
+          {
+            name: 'fake-model',
+            provider: 'fake',
+            context_window: 128000,
+            supports_tools: true,
+            supports_vision: true,
+            capabilities: {
+              vision: 'true',
+              tools: 'true',
+              audio_input: 'unknown',
+              audio_output: 'unknown',
+              structured_output: 'true',
+              is_local: 'false',
+            },
+          },
+          {
+            name: 'text-pro',
+            provider: 'fake',
+            context_window: 64000,
+            supports_tools: true,
+            supports_vision: false,
+            capabilities: {
+              vision: 'false',
+              tools: 'true',
+              audio_input: 'unknown',
+              audio_output: 'unknown',
+              structured_output: 'true',
+              is_local: 'false',
+            },
+          },
+          {
+            name: 'local-llama',
+            provider: 'fake',
+            context_window: 128000,
+            supports_tools: true,
+            supports_vision: null,
+            capabilities: {
+              vision: 'unknown',
+              tools: 'true',
+              audio_input: 'unknown',
+              audio_output: 'unknown',
+              structured_output: 'unknown',
+              is_local: 'true',
+            },
+          },
+        ],
+      })
+    }
+    const runMetricsMatch = path.match(/\/agent\/runs\/metrics\/([^/]+)$/)
+    if (runMetricsMatch && method === 'GET') {
+      const traceId = decodeURIComponent(runMetricsMatch[1])
+      return json(route, {
+        trace_id: traceId,
+        run_id: `run-${traceId}`,
+        provider: 'fake',
+        model: 'fake-model',
+        status: 'completed',
+        time_to_first_token_ms: 800,
+        total_duration_ms: 6400,
+        input_tokens: 3842,
+        output_tokens: 716,
+        total_tokens: 4558,
+        estimated_cost: 0.082,
+        cost_currency: 'USD',
+        cost_is_estimate: true,
+        graph_cache_hit: true,
+        attachment_count: 1,
+        retrieval_hits: 6,
       })
     }
     if (path.endsWith('/skills')) {
@@ -371,6 +433,44 @@ export async function installFakeBackend(
             : message.includes('__hang__')
               ? 'hang'
               : store.streamMode
+
+      const provider = String(body.provider ?? 'fake')
+      const model = String(body.model ?? 'fake-model')
+      const hasImageAttachment = Array.isArray(body.attachments)
+        && (body.attachments as Array<{ kind?: string; mime_type?: string }>).some(
+          a => a.kind === 'image' || String(a.mime_type ?? '').startsWith('image/'),
+        )
+
+      if (hasImageAttachment && model === 'text-pro') {
+        return json(route, {
+          detail: {
+            error_code: 'MODEL_INCOMPATIBLE',
+            message: '不可选：当前图片需要视觉能力',
+            provider,
+            model,
+            missing_capabilities: ['vision'],
+          },
+        }, 400)
+      }
+
+      const runMetrics = {
+        trace_id: `trace-${threadId}`,
+        run_id: `run-${threadId}`,
+        provider,
+        model,
+        status: 'completed',
+        time_to_first_token_ms: 800,
+        total_duration_ms: 6400,
+        input_tokens: attachmentIdCount > 0 ? 3842 : null,
+        output_tokens: attachmentIdCount > 0 ? 716 : null,
+        total_tokens: attachmentIdCount > 0 ? 4558 : null,
+        estimated_cost: attachmentIdCount > 0 ? 0.082 : null,
+        cost_currency: attachmentIdCount > 0 ? 'USD' : null,
+        cost_is_estimate: attachmentIdCount > 0,
+        graph_cache_hit: true,
+        attachment_count: attachmentIdCount || attachmentCount,
+        retrieval_hits: attachmentIdCount > 0 ? 6 : 0,
+      }
 
       const base = {
         version: '1',
@@ -460,7 +560,7 @@ export async function installFakeBackend(
             event: 'update',
             data: { data: { type: 'message', content: `echo:${agentId}:${message}${attachmentSuffix}` } },
           },
-          { ...base, event: 'done', data: { response: `echo:${agentId}:${message}${attachmentSuffix}` } },
+          { ...base, event: 'done', data: { response: `echo:${agentId}:${message}${attachmentSuffix}`, run_metrics: runMetrics } },
         ]),
       })
     }

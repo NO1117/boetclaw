@@ -27,6 +27,7 @@ import {
   type ExecutionRef,
   type StreamControl,
   type AttachmentRecordDto,
+  type RunMetricsSummary,
 } from '../services/api'
 import type { ModelSelection } from './ModelSelector'
 import PlanConfirm from './PlanConfirm'
@@ -60,10 +61,12 @@ interface Props {
   agentId: string
   onThreadId: (id: string) => void
   onTraceUpdate: (traceId: string, runId: string) => void
+  onRunMetrics?: (metrics: RunMetricsSummary) => void
+  onRunStarted?: () => void
   initialMessages?: ChatMessage[]
   historyVersion?: number
   modelSelection?: ModelSelection | null
-  onComposerAttachmentsChange?: (count: number) => void
+  onComposerAttachmentsChange?: (count: number, items: Array<{ kind: string }>) => void
 }
 
 interface PlanPending {
@@ -89,6 +92,8 @@ export default function ChatPanel({
   agentId,
   onThreadId,
   onTraceUpdate,
+  onRunMetrics,
+  onRunStarted,
   initialMessages = [],
   historyVersion = 0,
   modelSelection = null,
@@ -139,8 +144,9 @@ export default function ChatPanel({
   }, [historyVersion])
 
   useEffect(() => {
-    onComposerAttachmentsChange?.(attachments.length)
-  }, [attachments.length, onComposerAttachmentsChange])
+    const items = attachments.map(item => ({ kind: item.kind }))
+    onComposerAttachmentsChange?.(attachments.length, items)
+  }, [attachments, onComposerAttachmentsChange])
 
   useEffect(() => () => {
     if (streamControlRef.current) void streamControlRef.current.stop()
@@ -459,6 +465,7 @@ export default function ChatPanel({
 
     if (useStream) {
       setStreaming(true)
+      onRunStarted?.()
       let assistantContent = ''
       let composerCleared = false
       const clearComposerOnce = () => {
@@ -501,8 +508,12 @@ export default function ChatPanel({
               if (!assistantContent) assistantContent = '工具调用需要人工审批。'
             }
           }
-          if (envelope.event === 'done' && !assistantContent && typeof payload?.response === 'string') {
-            assistantContent = payload.response
+          if (envelope.event === 'done') {
+            if (!assistantContent && typeof payload?.response === 'string') {
+              assistantContent = payload.response
+            }
+            const runMetrics = payload?.run_metrics as RunMetricsSummary | undefined
+            if (runMetrics && onRunMetrics) onRunMetrics(runMetrics)
           }
 
           if (assistantContent) {

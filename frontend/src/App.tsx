@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Activity,
   Bot,
@@ -13,6 +13,8 @@ import {
 } from 'lucide-react'
 import ChatPanel from './components/ChatPanel'
 import ModelSelector, { type ModelSelection } from './components/ModelSelector'
+import RunMetricsCard from './components/RunMetricsCard'
+import type { RunMetricsSummary } from './services/api'
 import TaskMonitor from './components/TaskMonitor'
 import SidePanel from './components/SidePanel'
 import AgentSwitcher from './components/AgentSwitcher'
@@ -163,6 +165,23 @@ export default function App() {
   const [agentCreateTrigger, setAgentCreateTrigger] = useState(0)
   const [chatModelSelection, setChatModelSelection] = useState<ModelSelection | null>(null)
   const [composerAttachmentCount, setComposerAttachmentCount] = useState(0)
+  const [composerAttachments, setComposerAttachments] = useState<Array<{ kind: string }>>([])
+  const [latestRunMetrics, setLatestRunMetrics] = useState<RunMetricsSummary | null>(null)
+  const [runMetricsLoading, setRunMetricsLoading] = useState(false)
+
+  const handleComposerAttachmentsChange = useCallback((count: number, items: Array<{ kind: string }>) => {
+    setComposerAttachmentCount(count)
+    setComposerAttachments(items)
+  }, [])
+
+  const handleRunMetrics = useCallback((metrics: RunMetricsSummary) => {
+    setLatestRunMetrics(metrics)
+    setRunMetricsLoading(false)
+  }, [])
+
+  const handleRunStarted = useCallback(() => {
+    setRunMetricsLoading(true)
+  }, [])
 
   useEffect(() => {
     const onPopState = () => setRoute(parseRoute())
@@ -299,6 +318,7 @@ export default function App() {
                 value={chatModelSelection}
                 onChange={setChatModelSelection}
                 disabled={false}
+                pendingAttachments={composerAttachments}
               />
             )}
             {threadId && <span className="thread-badge">Thread: {threadId.slice(0, 8)}</span>}
@@ -350,10 +370,12 @@ export default function App() {
               agentId={agentId}
               onThreadId={setThreadId}
               onTraceUpdate={(traceId) => setActiveTraceId(traceId)}
+              onRunMetrics={handleRunMetrics}
+              onRunStarted={handleRunStarted}
               initialMessages={restoredMessages}
               historyVersion={historyVersion}
               modelSelection={chatModelSelection}
-              onComposerAttachmentsChange={setComposerAttachmentCount}
+              onComposerAttachmentsChange={handleComposerAttachmentsChange}
             />
           </section>
           <aside className="run-context" aria-label="运行上下文">
@@ -367,6 +389,15 @@ export default function App() {
                 <div><dt>附件</dt><dd>{composerAttachmentCount} 个</dd></div>
               </dl>
             </div>
+            <RunMetricsCard
+              metrics={latestRunMetrics}
+              loading={runMetricsLoading}
+              modelLabel={
+                latestRunMetrics?.model && latestRunMetrics?.provider
+                  ? `${latestRunMetrics.model} · ${latestRunMetrics.provider}`
+                  : chatModelSelection?.label
+              }
+            />
             <div className="context-card">
               <div className="run-context-header">能力与兼容性</div>
               <ul className="context-boundary-list">

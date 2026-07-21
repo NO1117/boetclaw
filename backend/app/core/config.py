@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     attachment_retrieval_max_chunks: int = 8
     attachment_retrieval_max_chars: int = 24_000
 
+    # Graph cache (isolated per-request agent graphs)
+    graph_cache_max_size: int = 32
+    graph_cache_ttl_seconds: int = 900
+
     # i18n
     lang: str = "zh"
 

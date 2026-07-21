@@ -21,6 +21,15 @@ class OpenAIProvider(Provider):
         ("o1", 200000, False),
     ]
 
+    def _model_info(self, name: str, cw: int, vision: bool) -> ModelInfo:
+        return ModelInfo(
+            name=name,
+            provider=self.name,
+            context_window=cw,
+            supports_vision=vision,
+            supports_tools=True,
+        )
+
     def is_configured(self) -> bool:
         return bool(settings.openai_api_key or settings.openai_base_url)
 
@@ -37,7 +46,4 @@ class OpenAIProvider(Provider):
         return ChatOpenAI(**init_kwargs)
 
     def list_models(self) -> list[ModelInfo]:
-        return [
-            ModelInfo(name=m, provider=self.name, context_window=cw, supports_vision=v)
-            for m, cw, v in self._MODELS
-        ]
+        return [self._model_info(m, cw, v) for m, cw, v in self._MODELS]

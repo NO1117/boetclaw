@@ -74,10 +74,18 @@ async def invoke_agent(
             state_in["plan_phase"] = "planning"
 
         invoke_agent = agent
+        graph_cache_hit: bool | None = None
+        graph_cache_build_ms: float | None = None
+        effective_provider: str | None = None
+        effective_model: str | None = None
         if model_string:
             from app.agents.resolver import build_agent_graph_with_model
+            from app.providers.manager import provider_manager
 
-            invoke_agent = await build_agent_graph_with_model(agent_id, model_string)
+            effective_provider, effective_model = provider_manager.parse_model_string(model_string)
+            invoke_agent, graph_cache_hit, graph_cache_build_ms = await build_agent_graph_with_model(
+                agent_id, model_string
+            )
             config = {
                 **config,
                 "configurable": {
@@ -85,6 +93,18 @@ async def invoke_agent(
                     "model_string": model_string,
                 },
             }
+
+        from app.services.run_metrics import run_metrics_tracker
+
+        run_metrics_tracker.start(
+            trace_id=tid,
+            run_id=rid,
+            agent_id=agent_id,
+            provider=effective_provider,
+            model=effective_model,
+            graph_cache_hit=graph_cache_hit,
+            graph_cache_build_ms=graph_cache_build_ms,
+        )
 
         result = await invoke_agent.ainvoke(state_in, config=config)
 
@@ -106,6 +126,18 @@ async def invoke_agent(
                 run_id=rid,
             )
 
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        from app.services.run_metrics import extract_usage_from_messages, run_metrics_tracker
+
+        usage = extract_usage_from_messages(messages)
+        metrics = run_metrics_tracker.complete(
+            tid,
+            usage=usage,
+            provider=effective_provider,
+            model=effective_model,
+            status="completed" if not interrupted else "interrupted",
+        )
+
         emit_event(
             EventType.AGENT_END,
             {"thread_id": thread_id, "agent_id": agent_id, "interrupted": interrupted},
@@ -125,6 +157,7 @@ async def invoke_agent(
             "execution_ref": finalized["execution_ref"],
             "payload": finalized["payload"],
             "source": source,
+            "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
         reset_run_context(context_tokens)
@@ -241,6 +274,8 @@ async def stream_agent(
     run_id: str | None = None,
     user_content: str | list[Any] | None = None,
     model_string: str | None = None,
+    attachment_count: int = 0,
+    retrieval_hits: int = 0,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream one Agent run and finish with the same result contract as invoke_agent."""
     from app.memory.context_policy import normalize_source, should_persist_memory
@@ -283,10 +318,18 @@ async def stream_agent(
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
         stream_agent = agent
+        graph_cache_hit: bool | None = None
+        graph_cache_build_ms: float | None = None
+        effective_provider: str | None = None
+        effective_model: str | None = None
         if model_string:
             from app.agents.resolver import build_agent_graph_with_model
+            from app.providers.manager import provider_manager
 
-            stream_agent = await build_agent_graph_with_model(agent_id, model_string)
+            effective_provider, effective_model = provider_manager.parse_model_string(model_string)
+            stream_agent, graph_cache_hit, graph_cache_build_ms = await build_agent_graph_with_model(
+                agent_id, model_string
+            )
             config = {
                 **config,
                 "configurable": {
@@ -294,6 +337,21 @@ async def stream_agent(
                     "model_string": model_string,
                 },
             }
+
+        from app.services.run_metrics import run_metrics_tracker
+
+        run_metrics_tracker.start(
+            trace_id=tid,
+            run_id=rid,
+            agent_id=agent_id,
+            provider=effective_provider,
+            model=effective_model,
+            attachment_count=attachment_count,
+            retrieval_hits=retrieval_hits,
+            graph_cache_hit=graph_cache_hit,
+            graph_cache_build_ms=graph_cache_build_ms,
+        )
+        first_token_recorded = False
 
         async for raw_event in stream_agent.astream(
             state_in,
@@ -313,6 +371,9 @@ async def stream_agent(
                 chunk = _stream_message(data)
                 chunk_content = getattr(chunk, "content", "")
                 if isinstance(chunk_content, str) and chunk_content:
+                    if not first_token_recorded:
+                        run_metrics_tracker.record_first_token(tid)
+                        first_token_recorded = True
                     content_parts.append(chunk_content)
             elif mode == "updates":
                 _merge_stream_update(result, data)
@@ -340,6 +401,19 @@ async def stream_agent(
                 trace_id=tid,
                 run_id=rid,
             )
+
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        from app.services.run_metrics import extract_usage_from_messages
+
+        usage = extract_usage_from_messages(messages)
+        metrics = run_metrics_tracker.complete(
+            tid,
+            usage=usage,
+            provider=effective_provider,
+            model=effective_model,
+            status="completed" if not finalized["interrupted"] else "interrupted",
+        )
+
         emit_event(
             EventType.AGENT_END,
             {"thread_id": thread_id, "agent_id": agent_id, "interrupted": finalized["interrupted"]},
@@ -352,6 +426,7 @@ async def stream_agent(
             "run_id": rid,
             **finalized,
             "source": source,
+            "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
         reset_run_context(context_tokens)
