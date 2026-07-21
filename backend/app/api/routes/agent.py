@@ -111,7 +111,11 @@ async def chat(request: Request, body: ChatRequest):
             source=prepared.source,
             attachment_refs=prepared.attachment_refs,
         )
-        return ChatResponse(**{k: v for k, v in result.items() if k in ChatResponse.model_fields})
+        payload = {k: v for k, v in result.items() if k in ChatResponse.model_fields}
+        payload["memory_context"] = prepared.memory_context
+        payload["memory_candidates"] = prepared.memory_candidates
+        payload["memory_actions"] = prepared.memory_actions
+        return ChatResponse(**payload)
     except ChatPreparationError as exc:
         raise _http_error(exc) from exc
     except Exception as exc:
@@ -235,6 +239,9 @@ async def chat_stream(request: Request, body: ChatRequest):
                         "response": result.get("response", ""),
                         "interrupted": bool(result.get("interrupted")),
                         "run_metrics": result.get("run_metrics"),
+                        "memory_context": prepared.memory_context,
+                        "memory_candidates": prepared.memory_candidates,
+                        "memory_actions": prepared.memory_actions,
                     },
                 )
         except Exception as exc:

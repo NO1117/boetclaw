@@ -27,6 +27,8 @@ import CronManager from './components/CronManager'
 import PluginsManager from './components/PluginsManager'
 import McpManager from './components/McpManager'
 import ChannelsManager from './components/ChannelsManager'
+import MemoryManager from './components/MemoryManager'
+import MemoryContextCard from './components/MemoryContextCard'
 import {
   cancelTask,
   archiveChatSession,
@@ -52,10 +54,11 @@ import {
   type ConsoleAuthStatus,
   type Task,
   type TraceTimeline,
+  type MemoryContextSummary,
 } from './services/api'
 import './App.css'
 
-type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security'
+type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security' | 'memory'
 
 interface AppRoute {
   page: 'chat' | 'tasks' | 'agents' | 'trace' | 'settings' | 'removed' | 'not-found'
@@ -139,7 +142,7 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   if (path === '/settings') return { page: 'settings', settingsTab: 'skills' }
   if (path.startsWith('/settings/')) {
     const raw = path.slice('/settings/'.length)
-    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security']
+    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security', 'memory']
     return {
       page: 'settings',
       settingsTab: allowed.includes(raw as SettingsTab) ? raw as SettingsTab : 'skills',
@@ -168,6 +171,7 @@ export default function App() {
   const [composerAttachments, setComposerAttachments] = useState<Array<{ kind: string }>>([])
   const [latestRunMetrics, setLatestRunMetrics] = useState<RunMetricsSummary | null>(null)
   const [runMetricsLoading, setRunMetricsLoading] = useState(false)
+  const [memoryContext, setMemoryContext] = useState<MemoryContextSummary | null>(null)
 
   const handleComposerAttachmentsChange = useCallback((count: number, items: Array<{ kind: string }>) => {
     setComposerAttachmentCount(count)
@@ -376,6 +380,7 @@ export default function App() {
               historyVersion={historyVersion}
               modelSelection={chatModelSelection}
               onComposerAttachmentsChange={handleComposerAttachmentsChange}
+              onMemoryContext={setMemoryContext}
             />
           </section>
           <aside className="run-context" aria-label="运行上下文">
@@ -389,6 +394,7 @@ export default function App() {
                 <div><dt>附件</dt><dd>{composerAttachmentCount} 个</dd></div>
               </dl>
             </div>
+            <MemoryContextCard summary={memoryContext} />
             <RunMetricsCard
               metrics={latestRunMetrics}
               loading={runMetricsLoading}
@@ -513,7 +519,7 @@ export default function App() {
           <PageHeader
             icon={<Settings size={18} />}
             title="设置"
-            description="技能、模型 Provider、Cron/心跳、插件、渠道与 MCP 的统一配置中心。"
+            description="技能、模型 Provider、Cron/心跳、插件、渠道、长期记忆与 MCP 的统一配置中心。"
           />
           <SettingsPage
             tab={settingsTab}
@@ -998,6 +1004,7 @@ function SettingsPage({
     { id: 'plugins', label: '插件' },
     { id: 'channels', label: '渠道' },
     { id: 'mcp', label: 'MCP' },
+    { id: 'memory', label: '长期记忆' },
     { id: 'security', label: '安全' },
   ]
 
@@ -1051,6 +1058,7 @@ function SettingsPage({
           {tab === 'plugins' && <PluginsManager />}
           {tab === 'mcp' && <McpManager />}
           {tab === 'channels' && <ChannelsManager />}
+          {tab === 'memory' && <MemoryManager agentId={agentId} />}
           {tab === 'security' && <SecuritySettings />}
         </div>
       </section>

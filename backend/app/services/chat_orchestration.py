@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from pydantic import ValidationError
@@ -65,6 +65,9 @@ class PreparedChat:
     model_override: str | None = None
     model_string: str | None = None
     command: CommandResult | None = None
+    memory_context: dict | None = None
+    memory_candidates: list[dict] = field(default_factory=list)
+    memory_actions: list[dict] = field(default_factory=list)
 
     @property
     def response_thread_id(self) -> str:
@@ -237,6 +240,26 @@ async def prepare_chat(
             resolved_lang,
         )
     agent = None if command is not None else await resolve_agent_graph(resolved_agent_id)
+
+    memory_context: dict | None = None
+    memory_candidates: list[dict] = []
+    memory_actions: list[dict] = []
+    effective_user_content = resolved.user_content
+    if agent is not None and command is None:
+        from app.memory.service import memory_service
+
+        effective_user_content, summary, actions, candidates = memory_service.prepare_chat_memory(
+            agent_id=resolved_agent_id,
+            thread_id=resolved_thread_id,
+            message=message,
+            source=resolved_source,
+            trace_id=trace_id,
+            user_content=resolved.user_content,
+        )
+        memory_context = summary.model_dump()
+        memory_candidates = [item.model_dump() for item in candidates]
+        memory_actions = [item.model_dump() for item in actions]
+
     return PreparedChat(
         message=message,
         thread_id=resolved_thread_id,
@@ -246,7 +269,7 @@ async def prepare_chat(
         trace_id=trace_id,
         run_id=new_run_id(),
         agent=agent,
-        user_content=resolved.user_content,
+        user_content=effective_user_content,
         history_user_message=resolved.history_text,
         attachment_summaries=resolved.summaries,
         attachment_refs=list(resolved.attachment_refs),
@@ -255,4 +278,7 @@ async def prepare_chat(
         model_override=model_override,
         model_string=model_string,
         command=command,
+        memory_context=memory_context,
+        memory_candidates=memory_candidates,
+        memory_actions=memory_actions,
     )

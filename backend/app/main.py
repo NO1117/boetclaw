@@ -20,6 +20,7 @@ from app.api.routes import (
     domain,
     files,
     gateway,
+    memories,
     monitor,
     plugins,
     providers,
@@ -71,6 +72,9 @@ async def lifespan(app: FastAPI):
             from app.core.observability import get_logger
 
             get_logger("startup").error("checkpoint_close_failed", error=str(exc))
+        from app.memory.service import memory_service
+
+        memory_service.close()
 
 
 app = FastAPI(
@@ -103,6 +107,7 @@ app.include_router(security.router, prefix=API_PREFIX)
 app.include_router(skills.router, prefix=API_PREFIX)
 app.include_router(agents.router, prefix=API_PREFIX)
 app.include_router(attachments.router, prefix=API_PREFIX)
+app.include_router(memories.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
 app.include_router(voice.router, prefix=API_PREFIX)
 app.include_router(plugins.router, prefix=API_PREFIX)

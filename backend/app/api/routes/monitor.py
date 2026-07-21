@@ -92,11 +92,16 @@ async def health(request: Request):
     app_ready = getattr(request.app.state, "agent_ready", None)
     agent_ready = app_ready if app_ready is not None else (agent_manager._agent is not None)
     checkpoint = checkpoint_provider.status()
+    from app.memory.service import memory_service
+
+    memory = memory_service.health()
+    status = "degraded" if checkpoint["status"] == "error" or memory.get("status") == "error" else "healthy"
     return {
-        "status": "degraded" if checkpoint["status"] == "error" else "healthy",
+        "status": status,
         "ready": getattr(request.app.state, "ready", True),
         "agent_ready": agent_ready,
         "checkpoint": checkpoint,
+        "memory": memory,
     }
 
 

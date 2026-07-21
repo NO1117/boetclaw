@@ -34,6 +34,15 @@ async def phase1_fast(app: Any) -> None:
         app.state.checkpoint_ready = False
         logger.error("checkpoint_init_failed", error=str(exc))
 
+    from app.memory.service import memory_service
+
+    try:
+        memory_service.initialize()
+        app.state.memory_ready = memory_service.enabled
+    except Exception as exc:  # noqa: BLE001
+        app.state.memory_ready = False
+        logger.error("memory_init_failed", error=str(exc))
+
     if checkpoint_provider.backend == "memory":
         from app.security.approval import approval_service
 

@@ -46,6 +46,12 @@ class EventType(str, Enum):
     PROVIDER_RETRY = "provider_retry"
     MEMORY_PERSIST = "memory_persist"
     MEMORY_SKIP = "memory_skip"
+    MEMORY_CREATED = "memory_created"
+    MEMORY_CANDIDATE = "memory_candidate"
+    MEMORY_APPROVED = "memory_approved"
+    MEMORY_REJECTED = "memory_rejected"
+    MEMORY_RETRIEVED = "memory_retrieved"
+    MEMORY_DELETED = "memory_deleted"
     VOICE_STAGE = "voice_stage"
 
 

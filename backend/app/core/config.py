@@ -75,7 +75,17 @@ class Settings(BaseSettings):
     plugins_dir: Path = Field(default=BASE_DIR / "plugins_ext")
 
     # Memory & context
-    memory_backend: str = "file"  # file|store|none
+    memory_backend: str = "sqlite"  # file|store|none|sqlite
+    memory_auto_mode: str = "review"  # off|review|auto
+    memory_sqlite_path: Path = Field(default=BASE_DIR / "workspace" / "memory")
+    memory_allow_inmemory_fallback: bool = False
+    memory_max_content_chars: int = 2000
+    memory_max_tags: int = 10
+    memory_max_per_agent: int = 500
+    memory_query_max_chars: int = 200
+    memory_page_max_size: int = 100
+    memory_retrieval_max_items: int = 8
+    memory_retrieval_max_chars: int = 4000
     context_summarization_enabled: bool = False
     context_keep_messages: int = 20
     context_trigger_tokens: int = 4000

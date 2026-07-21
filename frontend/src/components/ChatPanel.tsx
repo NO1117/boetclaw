@@ -27,10 +27,14 @@ import {
   type StreamControl,
   type AttachmentRecordDto,
   type RunMetricsSummary,
+  type MemoryCandidateDto,
+  type MemoryContextSummary,
+  type MemoryActionDto,
 } from '../services/api'
 import type { ModelSelection } from './ModelSelector'
 import PlanConfirm from './PlanConfirm'
 import ApprovalCard from './ApprovalCard'
+import MemoryCandidateBar from './MemoryCandidateBar'
 import {
   ATTACHMENT_LIMITS,
   attachmentIdsForRequest,
@@ -77,6 +81,7 @@ interface Props {
   historyVersion?: number
   modelSelection?: ModelSelection | null
   onComposerAttachmentsChange?: (count: number, items: Array<{ kind: string }>) => void
+  onMemoryContext?: (summary: MemoryContextSummary | null) => void
 }
 
 interface PlanPending {
@@ -106,6 +111,7 @@ export default function ChatPanel({
   historyVersion = 0,
   modelSelection = null,
   onComposerAttachmentsChange,
+  onMemoryContext,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -117,6 +123,30 @@ export default function ChatPanel({
   const [streaming, setStreaming] = useState(false)
   const [useStream, setUseStream] = useState(true)
   const [planPending, setPlanPending] = useState<PlanPending | null>(null)
+  const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidateDto[]>([])
+  const applyMemoryPayload = useCallback((payload: Record<string, unknown> | null | undefined) => {
+    const summary = payload?.memory_context as MemoryContextSummary | undefined
+    const candidates = payload?.memory_candidates as MemoryCandidateDto[] | undefined
+    const actions = payload?.memory_actions as MemoryActionDto[] | undefined
+    onMemoryContext?.(summary ?? null)
+    if (candidates?.length) {
+      setMemoryCandidates(prev => {
+        const ids = new Set(prev.map(item => item.id))
+        return [...prev, ...candidates.filter(item => !ids.has(item.id))]
+      })
+    }
+    if (actions?.length) {
+      setMessages(prev => [
+        ...prev,
+        ...actions
+          .filter(action => action.message)
+          .map(action => ({
+            role: 'assistant' as const,
+            content: `记忆：${action.message}`,
+          })),
+      ])
+    }
+  }, [onMemoryContext])
   const [approvalPending, setApprovalPending] = useState(false)
   const [speechState, setSpeechState] = useState<VoiceInputState>(
     getSpeechRecognitionCtor() ? 'idle' : 'unsupported',
@@ -512,6 +542,7 @@ export default function ChatPanel({
             }
             const runMetrics = payload?.run_metrics as RunMetricsSummary | undefined
             if (runMetrics && onRunMetrics) onRunMetrics(runMetrics)
+            applyMemoryPayload(payload)
           }
 
           if (assistantContent) {
@@ -556,9 +587,10 @@ export default function ChatPanel({
         }
         if (result.interrupted && result.execution_ref?.interrupt_type === 'plan_confirm') {
           setPlanPending({ executionRef: result.execution_ref, todos: result.todos })
-        } else if (result.interrupted && result.execution_ref?.interrupt_type === 'tool_approval') {
+        } else         if (result.interrupted && result.execution_ref?.interrupt_type === 'tool_approval') {
           setApprovalPending(true)
         }
+        applyMemoryPayload(result as unknown as Record<string, unknown>)
         clearComposer()
       } catch (err) {
         setMessages(prev => [...prev, { role: 'assistant', content: `错误: ${err}` }])
@@ -741,6 +773,17 @@ export default function ChatPanel({
           />
         )}
         {approvalPending && <ApprovalCard />}
+        {memoryCandidates.map(candidate => (
+          <MemoryCandidateBar
+            key={candidate.id}
+            agentId={agentId}
+            candidate={candidate}
+            onResolved={() => {
+              setMemoryCandidates(prev => prev.filter(item => item.id !== candidate.id))
+              onMemoryContext?.(null)
+            }}
+          />
+        ))}
         <div ref={bottomRef} />
       </div>
 

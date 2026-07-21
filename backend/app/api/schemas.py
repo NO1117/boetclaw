@@ -54,6 +54,9 @@ class ChatResponse(BaseModel):
     agent_id: str = "default"
     execution_ref: ExecutionRef | None = None
     payload: Any = None
+    memory_context: dict[str, Any] | None = None
+    memory_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    memory_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RunCancelRequest(BaseModel):

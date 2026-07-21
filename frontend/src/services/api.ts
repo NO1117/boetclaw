@@ -1557,3 +1557,185 @@ export async function fetchCommands(): Promise<{ commands: CommandInfo[] }> {
   return res.json()
 }
 
+export interface MemoryRecordDto {
+  id: string
+  agent_id: string
+  scope: 'agent' | 'thread'
+  thread_id: string
+  content: string
+  summary: string
+  tags: string[]
+  source_type: string
+  source_thread: string
+  source_trace: string
+  status: 'active' | 'pending' | 'rejected' | 'deleted'
+  created_at: string
+  updated_at: string
+  last_used_at: string
+  use_count: number
+}
+
+export interface MemoryListResponse {
+  items: MemoryRecordDto[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface MemoryContextSummary {
+  mode: 'off' | 'review' | 'auto'
+  backend: string
+  persistent: boolean
+  saved_count: number
+  used_count: number
+  pending_count: number
+  injected_chars: number
+  items: Array<{ id: string; scope: string; summary: string; source_type?: string; source_thread?: string }>
+}
+
+export interface MemoryCandidateDto {
+  id: string
+  summary: string
+  content: string
+  scope: 'agent' | 'thread'
+  source_type: string
+  source_thread: string
+  source_trace: string
+}
+
+export interface MemoryActionDto {
+  action: string
+  success: boolean
+  memory_id?: string
+  message?: string
+}
+
+export async function fetchMemories(
+  agentId: string,
+  params: {
+    q?: string
+    scope?: string
+    status?: string
+    threadId?: string
+    tag?: string
+    page?: number
+    pageSize?: number
+  } = {},
+): Promise<MemoryListResponse> {
+  const query = new URLSearchParams({ agent_id: agentId })
+  if (params.q) query.set('q', params.q)
+  if (params.scope) query.set('scope', params.scope)
+  if (params.status) query.set('status', params.status)
+  if (params.threadId) query.set('thread_id', params.threadId)
+  if (params.tag) query.set('tag', params.tag)
+  if (params.page) query.set('page', String(params.page))
+  if (params.pageSize) query.set('page_size', String(params.pageSize))
+  const res = await fetch(`${API_BASE}/memories?${query}`, { headers: consoleAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function createMemory(payload: {
+  agentId: string
+  content: string
+  scope?: string
+  threadId?: string
+  tags?: string[]
+}): Promise<MemoryRecordDto> {
+  const res = await fetch(`${API_BASE}/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+    body: JSON.stringify({
+      agent_id: payload.agentId,
+      content: payload.content,
+      scope: payload.scope ?? 'agent',
+      thread_id: payload.threadId ?? '',
+      tags: payload.tags ?? [],
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateMemory(
+  agentId: string,
+  memoryId: string,
+  payload: { content?: string; tags?: string[]; scope?: string; threadId?: string; status?: string },
+): Promise<MemoryRecordDto> {
+  const res = await fetch(`${API_BASE}/memories/${encodeURIComponent(memoryId)}?agent_id=${encodeURIComponent(agentId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+    body: JSON.stringify({
+      content: payload.content,
+      tags: payload.tags,
+      scope: payload.scope,
+      thread_id: payload.threadId,
+      status: payload.status,
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteMemory(agentId: string, memoryId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/memories/${encodeURIComponent(memoryId)}?agent_id=${encodeURIComponent(agentId)}`,
+    { method: 'DELETE', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function approveMemory(agentId: string, memoryId: string): Promise<MemoryRecordDto> {
+  const res = await fetch(
+    `${API_BASE}/memories/${encodeURIComponent(memoryId)}/approve?agent_id=${encodeURIComponent(agentId)}`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function rejectMemory(agentId: string, memoryId: string): Promise<MemoryRecordDto> {
+  const res = await fetch(
+    `${API_BASE}/memories/${encodeURIComponent(memoryId)}/reject?agent_id=${encodeURIComponent(agentId)}`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function bulkDeleteMemories(payload: {
+  agentId: string
+  status?: string
+  scope?: string
+  threadId?: string
+  ids?: string[]
+}): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE}/memories/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+    body: JSON.stringify({
+      agent_id: payload.agentId,
+      status: payload.status ?? '',
+      scope: payload.scope ?? '',
+      thread_id: payload.threadId ?? '',
+      ids: payload.ids ?? [],
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function exportMemories(agentId: string): Promise<{ agent_id: string; exported_at: string; memories: MemoryRecordDto[] }> {
+  const res = await fetch(`${API_BASE}/memories/export?agent_id=${encodeURIComponent(agentId)}`, {
+    headers: consoleAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchMemoryHealth(): Promise<{ health: Record<string, unknown>; metrics: Record<string, unknown> }> {
+  const res = await fetch(`${API_BASE}/memories/health`, { headers: consoleAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+

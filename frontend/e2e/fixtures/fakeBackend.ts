@@ -38,6 +38,8 @@ export interface FakeStore {
   lastVoiceTranscription: Record<string, unknown> | null
   lastVoiceSpeech: Record<string, unknown> | null
   lastVoiceCapabilities: Record<string, unknown> | null
+  memories: Record<string, Record<string, unknown>>
+  memoryHealth: Record<string, unknown>
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
@@ -84,6 +86,17 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     lastVoiceTranscription: null,
     lastVoiceSpeech: null,
     lastVoiceCapabilities: null,
+    memories: {},
+    memoryHealth: {
+      status: 'ready',
+      backend: 'sqlite',
+      persistent: true,
+      schema_version: 1,
+      fts_enabled: true,
+      writable: true,
+      mode: 'review',
+      error: '',
+    },
     hangReleases,
     releaseHangStreams() {
       while (hangReleases.length) hangReleases.pop()?.()
@@ -102,6 +115,7 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.lastVoiceTranscription = null
       store.lastVoiceSpeech = null
       store.lastVoiceCapabilities = null
+      store.memories = {}
       store.authenticated = !store.loginRequired
       store.releaseHangStreams()
     },
@@ -293,7 +307,98 @@ export async function installFakeBackend(
           open_agent_savers: 1,
           error: '',
         },
+        memory: store.memoryHealth,
       })
+    }
+
+    if (path.endsWith('/memories/health')) {
+      return json(route, { health: store.memoryHealth, metrics: { created: Object.keys(store.memories).length } })
+    }
+    if (path.endsWith('/memories/export') && method === 'GET') {
+      const agentId = url.searchParams.get('agent_id') ?? 'default'
+      return json(route, {
+        agent_id: agentId,
+        exported_at: nowIso(),
+        memories: Object.values(store.memories).filter(m => m.agent_id === agentId && m.status === 'active'),
+      })
+    }
+    if (path.endsWith('/memories/bulk-delete') && method === 'POST') {
+      const body = request.postDataJSON() as { agent_id?: string; status?: string; ids?: string[] }
+      const agentId = String(body.agent_id ?? '')
+      let deleted = 0
+      for (const [id, row] of Object.entries(store.memories)) {
+        if (row.agent_id !== agentId) continue
+        if (body.status && row.status !== body.status) continue
+        if (body.ids?.length && !body.ids.includes(id)) continue
+        if (!body.status && !(body.ids?.length)) continue
+        delete store.memories[id]
+        deleted += 1
+      }
+      if (!body.status && !(body.ids?.length)) {
+        return json(route, { detail: 'bulk delete requires filter' }, 400)
+      }
+      return json(route, { deleted })
+    }
+    if (path.endsWith('/memories') && method === 'GET') {
+      const agentId = url.searchParams.get('agent_id') ?? 'default'
+      const status = url.searchParams.get('status') ?? ''
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const items = Object.values(store.memories).filter(row => {
+        if (row.agent_id !== agentId) return false
+        if (status && row.status !== status) return false
+        if (q && !String(row.summary ?? row.content).toLowerCase().includes(q)) return false
+        return row.status !== 'deleted'
+      })
+      return json(route, { items, total: items.length, page: 1, page_size: 20 })
+    }
+    if (path.endsWith('/memories') && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      const id = `mem-${Object.keys(store.memories).length + 1}`
+      const record = {
+        id,
+        agent_id: String(body.agent_id ?? 'default'),
+        scope: String(body.scope ?? 'agent'),
+        thread_id: String(body.thread_id ?? ''),
+        content: String(body.content ?? ''),
+        summary: String(body.content ?? '').slice(0, 80),
+        tags: Array.isArray(body.tags) ? body.tags : [],
+        source_type: 'manual',
+        source_thread: '',
+        source_trace: '',
+        status: String(body.status ?? 'active'),
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        last_used_at: '',
+        use_count: 0,
+      }
+      store.memories[id] = record
+      return json(route, record)
+    }
+    const memoryItemMatch = path.match(/\/memories\/([^/]+)(?:\/(approve|reject))?$/)
+    if (memoryItemMatch) {
+      const memoryId = decodeURIComponent(memoryItemMatch[1])
+      const action = memoryItemMatch[2]
+      const agentId = url.searchParams.get('agent_id') ?? 'default'
+      const record = store.memories[memoryId]
+      if (!record || record.agent_id !== agentId) return json(route, { detail: 'not found' }, 404)
+      if (method === 'GET' && !action) return json(route, record)
+      if (method === 'PATCH' && !action) {
+        const body = request.postDataJSON() as Record<string, unknown>
+        Object.assign(record, body, { updated_at: nowIso() })
+        return json(route, record)
+      }
+      if (method === 'DELETE' && !action) {
+        delete store.memories[memoryId]
+        return json(route, { deleted: true, memory_id: memoryId })
+      }
+      if (method === 'POST' && action === 'approve') {
+        record.status = 'active'
+        return json(route, record)
+      }
+      if (method === 'POST' && action === 'reject') {
+        record.status = 'rejected'
+        return json(route, record)
+      }
     }
     if (path.includes('/voice/capabilities')) {
       store.lastVoiceCapabilities = { at: nowIso() }
@@ -527,6 +632,53 @@ export async function installFakeBackend(
         retrieval_hits: attachmentIdCount > 0 ? 6 : 0,
       }
 
+      const memoryContext = {
+        mode: 'review',
+        backend: 'sqlite',
+        persistent: true,
+        saved_count: Object.values(store.memories).filter(m => m.agent_id === agentId && m.status === 'active').length,
+        used_count: message.includes('__memory_used__') ? 1 : 0,
+        pending_count: Object.values(store.memories).filter(m => m.agent_id === agentId && m.status === 'pending').length,
+        injected_chars: message.includes('__memory_used__') ? 42 : 0,
+        items: message.includes('__memory_used__')
+          ? [{ id: 'mem-used', scope: 'agent', summary: '用户偏好中文', source_type: 'manual' }]
+          : [],
+      }
+      const memoryCandidates = message.includes('__memory_candidate__')
+        ? [{
+            id: 'mem-pending-1',
+            summary: '我的偏好是使用 Markdown 输出',
+            content: '我的偏好是使用 Markdown 输出',
+            scope: 'agent',
+            source_type: 'user_chat',
+            source_thread: threadId,
+            source_trace: `trace-${threadId}`,
+          }]
+        : []
+      const memoryActions = message.includes('请记住')
+        ? [{ action: 'remember', success: true, memory_id: 'mem-explicit', message: '已保存到长期记忆' }]
+        : []
+
+      if (message.includes('__memory_candidate__')) {
+        store.memories['mem-pending-1'] = {
+          id: 'mem-pending-1',
+          agent_id: agentId,
+          scope: 'agent',
+          thread_id: '',
+          content: '我的偏好是使用 Markdown 输出',
+          summary: '我的偏好是使用 Markdown 输出',
+          tags: [],
+          source_type: 'user_chat',
+          source_thread: threadId,
+          source_trace: `trace-${threadId}`,
+          status: 'pending',
+          created_at: nowIso(),
+          updated_at: nowIso(),
+          last_used_at: '',
+          use_count: 0,
+        }
+      }
+
       const base = {
         version: '1',
         thread_id: threadId,
@@ -615,7 +767,13 @@ export async function installFakeBackend(
             event: 'update',
             data: { data: { type: 'message', content: `echo:${agentId}:${message}${attachmentSuffix}` } },
           },
-          { ...base, event: 'done', data: { response: `echo:${agentId}:${message}${attachmentSuffix}`, run_metrics: runMetrics } },
+          { ...base, event: 'done', data: {
+            response: `echo:${agentId}:${message}${attachmentSuffix}`,
+            run_metrics: runMetrics,
+            memory_context: memoryContext,
+            memory_candidates: memoryCandidates,
+            memory_actions: memoryActions,
+          } },
         ]),
       })
     }
