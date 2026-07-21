@@ -46,7 +46,7 @@ export default function MemoryCandidateBar({ agentId, candidate, onResolved }: P
       )}
       {error && <div className="detail-action-error">{error}</div>}
       <div className="memory-item-actions">
-        <button type="button" className="mgr-btn primary" disabled={busy} aria-label="保存候选记忆" onClick={() => void run('approve')}>保存</button>
+        <button type="button" className="mgr-btn primary" disabled={busy} onClick={() => void run('approve')}>保存</button>
         <button type="button" className="mgr-btn secondary" disabled={busy} onClick={() => void run('reject')}>忽略</button>
         {!editing ? (
           <button type="button" className="mgr-btn secondary" disabled={busy} onClick={() => setEditing(true)}>编辑后保存</button>

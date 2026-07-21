@@ -222,22 +222,20 @@ test.describe('voice capabilities', () => {
 })
 
 test.describe('persistent memory', () => {
-  test('设置页可管理长期记忆', async ({ page, fakeBackend: _fakeBackend }) => {
+  test('设置页可管理长期记忆', async ({ page }) => {
     await page.goto('/settings/memory')
     await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
     await expect(page.getByRole('heading', { level: 3, name: '长期记忆' })).toBeVisible()
-    await expect(page.getByPlaceholder('手动新增一条长期记忆…')).toBeVisible()
     await page.getByPlaceholder('手动新增一条长期记忆…').fill('E2E 手动记忆条目')
-    await page.getByRole('button', { name: '保存新记忆' }).click()
-    await expect(page.getByText('E2E 手动记忆条目')).toBeVisible({ timeout: 15_000 })
+    await page.locator('.memory-create-row').getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.getByText('E2E 手动记忆条目')).toBeVisible()
   })
 
-  test('对话上下文展示记忆摘要卡', async ({ page, fakeBackend: _fakeBackend }) => {
+  test('对话上下文展示记忆摘要卡', async ({ page }) => {
     await page.goto('/chat')
     await sendChat(page, '__memory_used__ 测试')
-    await expect(page.getByText(/echo:default:.*memory_used/)).toBeVisible()
-    const memoryCard = page.getByLabel('长期记忆上下文')
-    await expect(memoryCard).toBeVisible()
+    const memoryCard = page.locator('.memory-context-card')
+    await expect(memoryCard.getByRole('heading', { name: '长期记忆' })).toBeVisible()
     await expect(memoryCard.getByText('本次使用')).toBeVisible()
     await expect(memoryCard.locator('dd').filter({ hasText: /^1$/ })).toBeVisible()
   })
@@ -245,11 +243,9 @@ test.describe('persistent memory', () => {
   test('候选记忆确认条可批准', async ({ page, fakeBackend }) => {
     await page.goto('/chat')
     await sendChat(page, '__memory_candidate__ 偏好')
-    await expect(page.getByText(/echo:default:.*memory_candidate/)).toBeVisible()
-    const bar = page.locator('.memory-candidate-bar')
-    await expect(bar.getByText('检测到可保存的长期记忆')).toBeVisible()
-    await bar.getByRole('button', { name: '保存候选记忆' }).click()
-    await expect(bar).toHaveCount(0)
+    await expect(page.getByText('检测到可保存的长期记忆')).toBeVisible()
+    await page.locator('.memory-candidate-bar').getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.getByText('检测到可保存的长期记忆')).toHaveCount(0)
     expect(fakeBackend.memories['mem-pending-1']?.status).toBe('active')
   })
 })

@@ -131,7 +131,7 @@ export default function MemoryManager({ agentId }: Props) {
               onChange={e => setNewContent(e.target.value)}
               rows={2}
             />
-            <button type="button" className="mgr-btn primary" aria-label="保存新记忆" onClick={() => void handleCreate()}>保存</button>
+            <button type="button" className="mgr-btn primary" onClick={() => void handleCreate()}>保存</button>
           </div>
           {error && <div className="detail-action-error">{error}</div>}
           {loading && items.length === 0 && <div className="empty-hint">正在加载记忆…</div>}

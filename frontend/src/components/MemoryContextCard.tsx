@@ -12,11 +12,11 @@ export default function MemoryContextCard({ summary, loading }: Props) {
   const backend = summary?.backend ?? 'sqlite'
 
   return (
-    <div className="context-card memory-context-card" aria-label="长期记忆上下文">
-      <div className="run-context-header">
+    <div className="context-card memory-context-card">
+      <h4 className="run-context-header">
         <Brain size={14} aria-hidden />
-        <span>长期记忆</span>
-      </div>
+        长期记忆
+      </h4>
       {loading && <div className="empty-hint">更新记忆上下文…</div>}
       {!loading && !summary && (
         <div className="empty-hint">发送消息后显示本次记忆使用情况。</div>

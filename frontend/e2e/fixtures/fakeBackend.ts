@@ -50,7 +50,11 @@ function nowIso() {
 }
 
 function sse(envelopes: unknown[]) {
-  return envelopes.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')
+  return envelopes.map(e => {
+    const envelope = e as Record<string, unknown>
+    const event = String(envelope.event ?? 'message')
+    return `event: ${event}\ndata: ${JSON.stringify(e)}\n\n`
+  }).join('')
 }
 
 async function json(route: Route, body: unknown, status = 200) {
