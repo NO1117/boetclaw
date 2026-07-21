@@ -26,7 +26,7 @@
 
 ### 1.3 常用模型
 
-- `ChatRequest`：`message`（必填）、`thread_id?`、`agent_id?`、`source=user`、`lang?`。
+- `ChatRequest`：`message`、`thread_id?`、`agent_id?`、`source=user`、`lang?`；`attachments[]`（内联 Base64，兼容旧客户端）或 `attachment_ids[]`（推荐，两阶段上传）；二者不可同时使用。纯附件消息允许 `message=""`。
 - `ExecutionRef`：不可变的 `agent_id`、`thread_id`、显式 `checkpoint_ns`、`interrupt_id`、`interrupt_type`；根图 namespace 为 `""`。
 - `ChatResponse`：`thread_id`、`trace_id`、`run_id`、`response`、`todos[]`、`message_count`、`interrupted`、`agent_id`，中断时额外返回 `execution_ref` 与 `payload`。
 - `TaskCreateRequest`：`title`、`prompt`、`auto_run=true`、`gateway`、`gateway_user`、`metadata`。
@@ -63,6 +63,24 @@
 - `/stop` 通过请求中的 `agent_id + thread_id` 定位最新活动 run；同 thread 的其他 Agent 不受影响，无活动 run 返回明确命令响应。
 - 计划恢复与工具审批使用不同服务；二者只共享底层 graph resume adapter，interrupt type 不可互换。
 - 非默认同步调用和 resume 使用同一严格 Agent resolver；未知/已删除 Agent、非 pending ref、同 thread 跨 Agent 伪造 ref 返回明确 4xx，不回退 default。
+
+## 2.1 附件（两阶段上传）
+
+| 方法 | 完整路径 | 用途 | 主要请求/响应 |
+|---|---|---|---|
+| `POST` | `/api/v1/agents/{agent_id}/attachments` | 上传附件（multipart：`file`、`relative_path?`） | → 附件元数据；状态 `uploaded → parsing → ready/failed` |
+| `GET` | `/api/v1/agents/{agent_id}/attachments` | 列出当前 Agent 附件 | → `{attachments:[]}` |
+| `GET` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}` | 查询元数据/解析状态 | 跨 Agent 访问 404 |
+| `GET` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/content` | 结构摘要与文本块 | `{attachment, chunks[]}` |
+| `POST` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/retry` | 失败解析重试 | → 更新后的元数据 |
+| `POST` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/cancel` | 取消上传/解析并删除 | → tombstone |
+| `DELETE` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}` | 删除附件与解析产物 | → `{deleted:true}` |
+
+约定：
+
+- 附件按 Agent 隔离存储于 `workspace/attachments/{agent_id}/{attachment_id}/`；记录 SHA-256、MIME、签名校验、`scan_status=unscanned`（无扫描引擎时不伪装为已扫描）。
+- 聊天请求优先传 `attachment_ids`；服务端按关键词检索相关文本块注入模型上下文，Trace 记录块 ID/位置/截断信息，不记录原始二进制。
+- 会话历史仅保存附件 ID 与摘要行，不保存完整解析文本。
 
 ## 3. Console 身份认证
 

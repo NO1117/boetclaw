@@ -152,8 +152,8 @@
 
 /* Plan confirm & approval cards */
 .plan-confirm, .approval-card {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--warning);
+  background: var(--bg-approval);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 14px;
   margin: 10px 0;

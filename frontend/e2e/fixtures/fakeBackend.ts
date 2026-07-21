@@ -34,6 +34,7 @@ export interface FakeStore {
   lastPlanConfirm: Record<string, unknown> | null
   lastApprovalResume: Record<string, unknown> | null
   lastCancelRun: Record<string, unknown> | null
+  attachments: Record<string, Record<string, unknown>>
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
@@ -76,6 +77,7 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     lastPlanConfirm: null,
     lastApprovalResume: null,
     lastCancelRun: null,
+    attachments: {},
     hangReleases,
     releaseHangStreams() {
       while (hangReleases.length) hangReleases.pop()?.()
@@ -90,6 +92,7 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.lastPlanConfirm = null
       store.lastApprovalResume = null
       store.lastCancelRun = null
+      store.attachments = {}
       store.authenticated = !store.loginRequired
       store.releaseHangStreams()
     },
@@ -126,6 +129,7 @@ export async function installFakeBackend(
   const router = context ?? page
 
   await router.route('**/api/v1/**', async route => {
+    try {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname.replace(/\/+$/, '')
@@ -172,6 +176,21 @@ export async function installFakeBackend(
         })),
       })
     }
+    if (path.endsWith('/agents') && method === 'POST') {
+      const body = request.postDataJSON() as { agent_id?: string }
+      const agentId = String(body.agent_id ?? '')
+      if (!store.agents.some(a => a.agent_id === agentId)) {
+        store.agents.push({ agent_id: agentId, loaded: false })
+      }
+      return json(route, {
+        agent_id: agentId,
+        root: `/workspace/agents/${agentId}`,
+        created_at: nowIso(),
+        loaded: false,
+        skills_count: 0,
+        config: {},
+      })
+    }
     const agentFilesMatch = path.match(/\/agents\/([^/]+)\/files$/)
     if (agentFilesMatch && method === 'GET') {
       const agentId = decodeURIComponent(agentFilesMatch[1])
@@ -181,6 +200,37 @@ export async function installFakeBackend(
     if (agentHistoryMatch && method === 'GET') {
       const agentId = decodeURIComponent(agentHistoryMatch[1])
       return json(route, { agent_id: agentId, history: [] })
+    }
+    const attachmentCollectionMatch = path.match(/\/agents\/([^/]+)\/attachments$/)
+    if (attachmentCollectionMatch && method === 'POST') {
+      const agentId = decodeURIComponent(attachmentCollectionMatch[1])
+      const attachmentId = `att-${agentId}-${Object.keys(store.attachments).length + 1}`
+      const record = {
+        attachment_id: attachmentId,
+        agent_id: agentId,
+        filename: 'fixture.txt',
+        relative_path: '',
+        mime_type: 'text/plain',
+        size: 18,
+        kind: 'text',
+        status: 'ready',
+        scan_status: 'unscanned',
+        error_summary: '',
+        summary: { chunk_count: 1, searchable: true, char_count: 18, page_count: null, sheet_count: null, slide_count: null },
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        expires_at: nowIso(),
+        content: 'fixture citation text',
+      }
+      store.attachments[attachmentId] = record
+      return json(route, { ...record, status: 'uploaded' })
+    }
+    const attachmentItemMatch = path.match(/\/agents\/([^/]+)\/attachments\/([^/]+)$/)
+    if (attachmentItemMatch && method === 'GET') {
+      const attachmentId = decodeURIComponent(attachmentItemMatch[2])
+      const record = store.attachments[attachmentId]
+      if (!record) return json(route, { detail: 'not found' }, 404)
+      return json(route, record)
     }
     const agentMatch = path.match(/\/agents\/([^/]+)$/)
     if (agentMatch && method === 'GET') {
@@ -192,6 +242,17 @@ export async function installFakeBackend(
         loaded: true,
         skills_count: 0,
         config: {},
+      })
+    }
+    if (agentMatch && method === 'DELETE') {
+      const agentId = decodeURIComponent(agentMatch[1])
+      const purge = url.searchParams.get('purge') === 'true'
+      store.agents = store.agents.filter(a => a.agent_id !== agentId)
+      return json(route, {
+        deleted: agentId,
+        purged: purge,
+        checkpoint_retained: !purge,
+        detail: purge ? 'purged' : 'archived',
       })
     }
     if (path.endsWith('/agent/sessions')) {
@@ -207,6 +268,54 @@ export async function installFakeBackend(
         event_types: {},
         events: [],
       })
+    }
+    if (path.endsWith('/monitor/health')) {
+      return json(route, {
+        status: 'healthy',
+        ready: true,
+        agent_ready: true,
+        checkpoint: {
+          status: 'ready',
+          backend: 'sqlite',
+          persistent: true,
+          supports_restart_resume: true,
+          warning: '',
+          sqlite_path: '/tmp/checkpoints',
+          open_agent_savers: 1,
+          error: '',
+        },
+      })
+    }
+    if (path.endsWith('/providers/config')) {
+      return json(route, { provider: 'fake', model: 'fake-model' })
+    }
+    if (path.endsWith('/providers') && method === 'GET') {
+      return json(route, {
+        providers: [{
+          name: 'fake',
+          display_name: 'Fake Provider',
+          configured: true,
+          default_model: 'fake-model',
+          requires_api_key: false,
+        }],
+      })
+    }
+    if (path.endsWith('/providers/fake/models')) {
+      return json(route, {
+        models: [{
+          name: 'fake-model',
+          provider: 'fake',
+          context_window: 128000,
+          supports_tools: true,
+          supports_vision: true,
+        }],
+      })
+    }
+    if (path.endsWith('/skills')) {
+      return json(route, { pool: [], workspace: [] })
+    }
+    if (path.endsWith('/tasks') && method === 'GET') {
+      return json(route, store.tasks)
     }
     if (path.includes('/monitor/')) {
       return json(route, { events: [], sequence: [] })
@@ -246,6 +355,14 @@ export async function installFakeBackend(
       const agentId = String(body.agent_id ?? 'default')
       const threadId = String(body.thread_id || `thread-${agentId}-${Date.now()}`)
       const message = String(body.message ?? '')
+      const attachmentCount = Array.isArray(body.attachments) ? body.attachments.length : 0
+      const attachmentIdCount = Array.isArray(body.attachment_ids) ? body.attachment_ids.length : 0
+      const attachmentSuffix =
+        attachmentIdCount > 0
+          ? `:attachment_ids=${attachmentIdCount}`
+          : attachmentCount > 0
+            ? `:attachments=${attachmentCount}`
+            : ''
       const mode: StreamMode =
         message.startsWith('/plan')
           ? 'plan'
@@ -341,9 +458,9 @@ export async function installFakeBackend(
           {
             ...base,
             event: 'update',
-            data: { data: { type: 'message', content: `echo:${agentId}:${message}` } },
+            data: { data: { type: 'message', content: `echo:${agentId}:${message}${attachmentSuffix}` } },
           },
-          { ...base, event: 'done', data: { response: `echo:${agentId}:${message}` } },
+          { ...base, event: 'done', data: { response: `echo:${agentId}:${message}${attachmentSuffix}` } },
         ]),
       })
     }
@@ -512,6 +629,9 @@ export async function installFakeBackend(
 
     // Default empty JSON for remaining console probes.
     return json(route, {})
+    } catch (error) {
+      return json(route, { detail: error instanceof Error ? error.message : String(error) }, 500)
+    }
   })
 
   return store

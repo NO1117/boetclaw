@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import (
     agent,
     agents,
+    attachments,
     auth,
     cron,
     domain,
@@ -100,6 +101,7 @@ app.include_router(files.router, prefix=API_PREFIX)
 app.include_router(security.router, prefix=API_PREFIX)
 app.include_router(skills.router, prefix=API_PREFIX)
 app.include_router(agents.router, prefix=API_PREFIX)
+app.include_router(attachments.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
 app.include_router(plugins.router, prefix=API_PREFIX)
 app.include_router(plugins.commands_router, prefix=API_PREFIX)

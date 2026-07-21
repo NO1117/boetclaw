@@ -18,7 +18,7 @@ from app.core.agent import agent_manager
 from app.core.observability import serialize_for_sse, trace_store
 from app.memory.plan_history_store import plan_history_store
 from app.memory.session_store import session_store
-from app.services.chat_orchestration import PreparedChat, prepare_chat
+from app.services.chat_orchestration import ChatPreparationError, PreparedChat, prepare_chat
 from app.services.run_registry import run_registry
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
@@ -54,11 +54,15 @@ async def chat(request: Request, body: ChatRequest):
     try:
         prepared = await prepare_chat(
             message=body.message,
+            attachments=[item.model_dump() for item in body.attachments],
+            attachment_ids=body.attachment_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
             lang=body.lang,
             headers=request.headers,
+            provider=body.provider,
+            model=body.model,
         )
         lang_token = set_lang(prepared.lang)
         try:
@@ -86,19 +90,24 @@ async def chat(request: Request, body: ChatRequest):
                     source=prepared.source,
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
+                    user_content=prepared.user_content,
+                    model_string=prepared.model_string,
                 )
         finally:
             reset_lang(lang_token)
         session_store.record_turn(
             thread_id=prepared.thread_id,
             agent_id=prepared.agent_id,
-            user_message=prepared.message,
+            user_message=prepared.history_user_message,
             assistant_message=str(result.get("response", "")),
             trace_id=prepared.trace_id,
             run_id=prepared.run_id,
             source=prepared.source,
+            attachment_refs=prepared.attachment_refs,
         )
         return ChatResponse(**result)
+    except ChatPreparationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -140,12 +149,18 @@ async def chat_stream(request: Request, body: ChatRequest):
     try:
         prepared = await prepare_chat(
             message=body.message,
+            attachments=[item.model_dump() for item in body.attachments],
+            attachment_ids=body.attachment_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
             lang=body.lang,
             headers=request.headers,
+            provider=body.provider,
+            model=body.model,
         )
+    except ChatPreparationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -185,6 +200,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                     source=prepared.source,
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
+                    user_content=prepared.user_content,
+                    model_string=prepared.model_string,
                 ):
                     if event.pop("kind") == "update":
                         yield _sse(prepared, "update", event)
@@ -194,11 +211,12 @@ async def chat_stream(request: Request, body: ChatRequest):
                 session_store.record_turn(
                     thread_id=prepared.thread_id,
                     agent_id=prepared.agent_id,
-                    user_message=prepared.message,
+                    user_message=prepared.history_user_message,
                     assistant_message=str(result.get("response", "")),
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
                     source=prepared.source,
+                    attachment_refs=prepared.attachment_refs,
                 )
                 if result.get("interrupted"):
                     yield _sse(prepared, "interrupt", result)

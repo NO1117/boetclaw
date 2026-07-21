@@ -47,7 +47,8 @@
 | `test_phase10_plugins.py` | 14 | 插件启用边界、命令/i18n、插件治理路由 |
 | `test_plan620_webhook_signature.py` | 11 | 四渠道路由验签、`skipped`/`verified`、中间件豁免 |
 | `test_plan630_plugin_scan_delete.py` | 6 | 安装扫描门禁、scan-report、DELETE 清理、路径穿越 |
-| `test_plan640_agent_disk_purge.py` | 7 | 磁盘冷启动列表、tombstone 隐藏、purge 清盘/checkpoint、default 拒绝、resume 409 |
+| `test_attachment_production.py` | 8 | 两阶段上传、Agent 隔离、解析/重试/删除、attachment_ids 聊天、会话引用清理 |
+| `test_chat_attachments.py` | 11 | 内联 Base64 兼容、vision 校验、模型 override |
 | `test_phase12_observability.py` | 6 | trace、timeline、OTel、Prometheus 文本 |
 | `test_phase14_sessions.py` | 4 | 会话记录、列表、导出、删除、归档过滤与 API |
 | `test_phase15_gateway_ops.py` | 3 | 渠道状态、消息历史/重试、网关限流 |

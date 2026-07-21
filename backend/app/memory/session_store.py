@@ -39,6 +39,7 @@ class SessionStore:
         trace_id: str = "",
         run_id: str = "",
         source: str = "user",
+        attachment_refs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         data = self._load(thread_id)
@@ -54,7 +55,10 @@ class SessionStore:
             }
         )
         data.setdefault("messages", [])
-        data["messages"].append({"role": "user", "content": user_message, "created_at": now})
+        user_entry: dict[str, Any] = {"role": "user", "content": user_message, "created_at": now}
+        if attachment_refs:
+            user_entry["attachment_refs"] = attachment_refs
+        data["messages"].append(user_entry)
         data["messages"].append(
             {
                 "role": "assistant",

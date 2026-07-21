@@ -125,15 +125,65 @@
 .task-item {
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 14px 16px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
+  margin-bottom: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  align-items: flex-start;
+}
+
+.task-item:hover,
+.task-item:focus-visible {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+}
+
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.filter-chip {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filter-chip.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.task-search {
+  margin-left: auto;
+  min-width: 220px;
+  flex: 1;
+  max-width: 320px;
+}
+
+.task-status-label {
+  font-size: 11px;
+  font-weight: 600;
   margin-bottom: 4px;
 }
 
-.task-item:hover {
-  background: var(--bg-hover);
+.task-id {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .task-status-icon {

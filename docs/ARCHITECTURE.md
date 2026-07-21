@@ -101,6 +101,22 @@ lifespan 退出时取消并等待 Phase 2 任务，通过单进程 `RunRegistry`
 
 `list_agents` / `GET /agents` 会扫描 `agents_root` 子目录（跳过 `.deleted` tombstone），保证 default 始终在册，并仅懒加载元数据而不强制 build graph。默认删除写 tombstone 并保留目录与 checkpoint（`checkpoint_retained=true`）；`purge=true` 时删除工作区目录，经 `CheckpointProvider.purge` 清理该 Agent checkpoint，并留下 `.purged/{id}` 标记。tombstone/purge 后列表不可见，resume 返回 409；default 不可删除/不可 purge。`evict_idle()` 已实现但没有看到生命周期定时调用。
 
+### 4.2.1 附件子系统（PLAN-800）
+
+```text
+前端上传 → POST /agents/{id}/attachments
+  → AttachmentService（签名校验、Agent 隔离目录、SHA-256）
+  → 进程内后台解析（pypdf / python-docx / openpyxl / python-pptx / 文本）
+  → 结构分块 + 本地关键词索引
+聊天发送 attachment_ids → prepare_chat → resolve_attachment_ids_for_chat
+  → 关键词检索相关块 → 注入 LangChain user content
+  → session 仅存 ID/摘要；Trace 记录块引用与截断
+```
+
+- 存储：`workspace/attachments/{agent_id}/{attachment_id}/`（`original.bin`、`meta.json`、`chunks.json`、`keyword_index.json`）。
+- 生命周期：`uploading/uploaded/parsing/ready/failed/expired/deleted`；删除写 tombstone；清理任务跳过仍被会话 `attachment_refs` 引用的附件。
+- 兼容：旧版 `ChatRequest.attachments[]` Base64 路径仍可用；默认前端走两阶段 `attachment_ids`。
+
 ### 4.3 模型、工具与子智能体
 
 Agent Factory 解析 `provider:model`：

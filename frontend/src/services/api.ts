@@ -58,6 +58,51 @@ export interface ChatMessage {
   content: string
   traceId?: string
   runId?: string
+  attachments?: Array<{
+    filename: string
+    sizeLabel: string
+    kind: 'text' | 'image' | 'binary' | 'document'
+    attachmentId?: string
+    citation?: string
+  }>
+}
+
+export interface ChatAttachmentDto {
+  filename: string
+  relative_path?: string
+  mime_type: string
+  size: number
+  kind: 'text' | 'image' | 'binary'
+  content_base64: string
+}
+
+export interface AttachmentRecordDto {
+  attachment_id: string
+  agent_id: string
+  filename: string
+  relative_path: string
+  mime_type: string
+  size: number
+  kind: 'text' | 'image' | 'binary' | 'document'
+  status: 'uploading' | 'uploaded' | 'parsing' | 'ready' | 'failed' | 'expired' | 'deleted'
+  scan_status: 'unscanned' | 'clean' | 'infected' | 'error'
+  error_summary: string
+  summary: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  expires_at: string
+}
+
+export interface ChatRequestOptions {
+  message: string
+  threadId?: string
+  agentId?: string
+  source?: string
+  lang?: string
+  attachments?: ChatAttachmentDto[]
+  attachment_ids?: string[]
+  provider?: string
+  model?: string
 }
 
 export interface Task {
@@ -479,12 +524,89 @@ export interface ChatSessionDetail {
   archived_at?: string
 }
 
+export async function fetchAttachmentRecord(agentId: string, attachmentId: string): Promise<AttachmentRecordDto> {
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+    headers: consoleAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function listAgentAttachments(agentId: string): Promise<{ attachments: AttachmentRecordDto[] }> {
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments`, {
+    headers: consoleAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function uploadAgentAttachment(
+  agentId: string,
+  file: File,
+  relativePath: string,
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
+): Promise<AttachmentRecordDto> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments`)
+    const token = localStorage.getItem(CONSOLE_TOKEN_KEY)
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText) as AttachmentRecordDto)
+        return
+      }
+      reject(new Error(xhr.responseText || `上传失败 (${xhr.status})`))
+    }
+    xhr.onerror = () => reject(new Error('上传网络错误'))
+    xhr.onabort = () => reject(new Error('上传已取消'))
+    signal?.addEventListener('abort', () => xhr.abort())
+    const form = new FormData()
+    form.append('file', file, file.name)
+    form.append('relative_path', relativePath === file.name ? '' : relativePath)
+    xhr.send(form)
+  })
+}
+
+export async function retryAgentAttachment(agentId: string, attachmentId: string): Promise<AttachmentRecordDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}/retry`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cancelAgentAttachment(agentId: string, attachmentId: string): Promise<AttachmentRecordDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}/cancel`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteAgentAttachment(agentId: string, attachmentId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { method: 'DELETE', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
 export async function sendChat(
   message: string,
   threadId?: string,
   agentId?: string,
   source = 'user',
   lang?: string,
+  extras?: Omit<ChatRequestOptions, 'message' | 'threadId' | 'agentId' | 'source' | 'lang'>,
 ): Promise<ChatResult> {
   const res = await fetch(`${API_BASE}/agent/chat`, {
     method: 'POST',
@@ -498,6 +620,10 @@ export async function sendChat(
       agent_id: agentId,
       source,
       lang,
+      attachments: extras?.attachments ?? [],
+      attachment_ids: extras?.attachment_ids ?? [],
+      provider: extras?.provider,
+      model: extras?.model,
     }),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -618,6 +744,28 @@ export async function fetchTraceTimeline(traceId: string): Promise<TraceTimeline
 
 export async function fetchStats(): Promise<Stats> {
   const res = await fetch(`${API_BASE}/monitor/stats`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export interface MonitorHealth {
+  status: string
+  ready: boolean
+  agent_ready: boolean
+  checkpoint: {
+    status: string
+    backend: string
+    persistent: boolean
+    supports_restart_resume: boolean
+    warning: string
+    sqlite_path: string
+    open_agent_savers: number
+    error: string
+  }
+}
+
+export async function fetchMonitorHealth(): Promise<MonitorHealth> {
+  const res = await fetch(`${API_BASE}/monitor/health`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

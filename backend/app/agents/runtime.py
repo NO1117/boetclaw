@@ -28,6 +28,8 @@ async def invoke_agent(
     run_id: str | None = None,
     task_id: str = "",
     well_id: str = "",
+    user_content: str | list[Any] | None = None,
+    model_string: str | None = None,
 ) -> dict[str, Any]:
     from app.memory.context_policy import normalize_source, should_persist_memory
 
@@ -64,14 +66,30 @@ async def invoke_agent(
         )
 
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": clean_msg}]}
+        content = user_content if user_content is not None else clean_msg
+        if plan_mode:
+            content = clean_msg
+        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": content}]}
         if plan_mode:
             state_in["plan_phase"] = "planning"
 
-        result = await agent.ainvoke(state_in, config=config)
+        invoke_agent = agent
+        if model_string:
+            from app.agents.resolver import build_agent_graph_with_model
+
+            invoke_agent = await build_agent_graph_with_model(agent_id, model_string)
+            config = {
+                **config,
+                "configurable": {
+                    **config.get("configurable", {}),
+                    "model_string": model_string,
+                },
+            }
+
+        result = await invoke_agent.ainvoke(state_in, config=config)
 
         finalized = _finalize_agent_result(
-            agent,
+            invoke_agent,
             result,
             agent_id=agent_id,
             thread_id=thread_id,
@@ -221,6 +239,8 @@ async def stream_agent(
     source: str = "user",
     trace_id: str | None = None,
     run_id: str | None = None,
+    user_content: str | list[Any] | None = None,
+    model_string: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream one Agent run and finish with the same result contract as invoke_agent."""
     from app.memory.context_policy import normalize_source, should_persist_memory
@@ -254,12 +274,28 @@ async def stream_agent(
             trace_id=tid,
             run_id=rid,
         )
-        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": clean_msg}]}
+        content = user_content if user_content is not None else clean_msg
+        if plan_mode:
+            content = clean_msg
+        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": content}]}
         if plan_mode:
             state_in["plan_phase"] = "planning"
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
-        async for raw_event in agent.astream(
+        stream_agent = agent
+        if model_string:
+            from app.agents.resolver import build_agent_graph_with_model
+
+            stream_agent = await build_agent_graph_with_model(agent_id, model_string)
+            config = {
+                **config,
+                "configurable": {
+                    **config.get("configurable", {}),
+                    "model_string": model_string,
+                },
+            }
+
+        async for raw_event in stream_agent.astream(
             state_in,
             config=config,
             stream_mode=["messages", "updates"],
@@ -291,7 +327,7 @@ async def stream_agent(
             }
 
         finalized = _finalize_agent_result(
-            agent,
+            stream_agent,
             result,
             agent_id=agent_id,
             thread_id=thread_id,

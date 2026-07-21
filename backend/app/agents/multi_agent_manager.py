@@ -73,7 +73,7 @@ class MultiAgentManager:
             if agent_id not in self._ws:
                 self._ws[agent_id] = Workspace(agent_id=agent_id, root=child)
 
-    def _build_agent(self, ws: Workspace) -> Any:
+    def _build_agent(self, ws: Workspace, *, model: Any | None = None) -> Any:
         from deepagents.backends import FilesystemBackend
 
         from app.core.agent_factory import BoetClawAgentFactory, setup_env
@@ -86,13 +86,20 @@ class MultiAgentManager:
 
         skills = resolve_effective_skills(workspace_dir=ws.root, channel="console")
 
-        return BoetClawAgentFactory.build(
-            skills=skills or None,
-            memory=get_memory_files(),
-            backend=FilesystemBackend(root_dir=str(ws.files_dir())),
-            checkpointer=ws.checkpointer,
-            store=get_store(),
-        )
+        kwargs: dict[str, Any] = {
+            "skills": skills or None,
+            "memory": get_memory_files(),
+            "backend": FilesystemBackend(root_dir=str(ws.files_dir())),
+            "checkpointer": ws.checkpointer,
+            "store": get_store(),
+        }
+        if model is not None:
+            kwargs["model"] = model
+        return BoetClawAgentFactory.build(**kwargs)
+
+    def build_agent_with_model(self, ws: Workspace, model: Any) -> Any:
+        """Build a fresh workspace graph with an override model; does not cache it."""
+        return self._build_agent(ws, model=model)
 
     async def get_agent(self, agent_id: str) -> Workspace:
         if agent_id != settings.default_agent_id and self.is_tombstoned(agent_id):

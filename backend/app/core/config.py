@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     context_keep_messages: int = 20
     context_trigger_tokens: int = 4000
 
+    # Attachments
+    attachment_ttl_days: int = 30
+    attachment_chunk_max_chars: int = 4000
+    attachment_max_chunks: int = 500
+    attachment_max_parse_chars: int = 2_000_000
+    attachment_retrieval_max_chunks: int = 8
+    attachment_retrieval_max_chars: int = 24_000
+
     # i18n
     lang: str = "zh"
 

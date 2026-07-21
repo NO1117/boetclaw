@@ -81,6 +81,19 @@ export function streamChat(
   onEvent: (data: StreamEnvelope) => void,
   onDone: () => void,
   onError: (err: string) => void,
+  extras?: {
+    attachments?: Array<{
+      filename: string
+      relative_path?: string
+      mime_type: string
+      size: number
+      kind: 'text' | 'image' | 'binary'
+      content_base64: string
+    }>
+    attachment_ids?: string[]
+    provider?: string
+    model?: string
+  },
 ): StreamControl {
   const controller = new AbortController()
   const effectiveThreadId = threadId ?? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
@@ -110,6 +123,10 @@ export function streamChat(
       agent_id: agentId,
       source,
       lang,
+      attachments: extras?.attachments ?? [],
+      attachment_ids: extras?.attachment_ids ?? [],
+      provider: extras?.provider,
+      model: extras?.model,
     }),
     signal: controller.signal,
   }).then(async (res) => {

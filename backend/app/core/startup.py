@@ -21,6 +21,10 @@ async def phase1_fast(app: Any) -> None:
 
     settings.workspace_dir.mkdir(parents=True, exist_ok=True)
 
+    from app.services.attachments.startup_check import verify_attachment_parser_dependencies
+
+    app.state.attachment_parsers_missing = verify_attachment_parser_dependencies()
+
     from app.core.checkpoint import checkpoint_provider
 
     try:
@@ -72,6 +76,12 @@ async def phase2_background(app: Any) -> None:
 
         cron_service.start()
         heartbeat_service.start(scheduler=cron_service._scheduler)
+
+        from app.services.attachments.cleanup import run_attachment_cleanup
+
+        cleanup_stats = run_attachment_cleanup()
+        if cleanup_stats["expired"]:
+            logger.info("attachment_cleanup", **cleanup_stats)
 
         logger.info("phase2_done", elapsed_ms=round((time.perf_counter() - t) * 1000, 2))
     except Exception as exc:  # noqa: BLE001

@@ -9,12 +9,38 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.execution_ref import ExecutionRef
 
 
+class ChatAttachment(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=512)
+    relative_path: str = Field("", max_length=2048)
+    mime_type: str = Field("application/octet-stream", max_length=256)
+    size: int = Field(..., ge=0)
+    kind: Literal["text", "image", "binary"] = "binary"
+    content_base64: str = Field("", max_length=35_000_000)
+
+
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, description="User message")
+    message: str = Field("", description="User message")
+    attachments: list[ChatAttachment] = Field(default_factory=list)
+    attachment_ids: list[str] = Field(default_factory=list, description="Uploaded attachment IDs")
     thread_id: str | None = Field(None, description="Conversation thread ID")
     agent_id: str | None = Field(None, description="Target agent workspace id")
     source: str = Field("user", description="Request source: user|channel|cron|heartbeat")
     lang: str | None = Field(None, description="Response language override, e.g. zh or en")
+    provider: str | None = Field(None, description="Per-request provider override")
+    model: str | None = Field(None, description="Per-request model override")
+
+    @model_validator(mode="after")
+    def require_message_or_attachments(self) -> "ChatRequest":
+        has_inline = bool(self.attachments)
+        has_ids = bool(self.attachment_ids)
+        if not self.message.strip() and not has_inline and not has_ids:
+            raise ValueError("message、attachments 或 attachment_ids 至少提供一个")
+        if has_inline and has_ids:
+            raise ValueError("attachments 与 attachment_ids 不能同时使用")
+        if (self.provider is None) ^ (self.model is None):
+            if self.provider or self.model:
+                raise ValueError("provider 与 model 必须同时提供")
+        return self
 
 
 class ChatResponse(BaseModel):
