@@ -18,6 +18,7 @@ describe('MemoryContextCard', () => {
         }}
       />,
     )
+    expect(screen.getByRole('heading', { name: '长期记忆' })).toBeInTheDocument()
     expect(screen.getByText('review')).toBeInTheDocument()
     expect(screen.getByText('偏好中文')).toBeInTheDocument()
   })

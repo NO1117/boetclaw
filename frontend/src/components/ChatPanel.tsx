@@ -100,6 +100,27 @@ function formatSpeechDuration(seconds: number): string {
   return formatRecordingDuration(seconds)
 }
 
+function resolveStreamTerminalPayload(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const payload = data as Record<string, unknown>
+  const nested = payload.data
+  if (
+    nested &&
+    typeof nested === 'object' &&
+    !Array.isArray(nested) &&
+    (
+      'memory_context' in nested ||
+      'memory_candidates' in nested ||
+      'memory_actions' in nested ||
+      'response' in nested ||
+      'run_metrics' in nested
+    )
+  ) {
+    return nested as Record<string, unknown>
+  }
+  return payload
+}
+
 export default function ChatPanel({
   threadId,
   agentId,
@@ -537,12 +558,13 @@ export default function ChatPanel({
             }
           }
           if (envelope.event === 'done') {
-            if (!assistantContent && typeof payload?.response === 'string') {
-              assistantContent = payload.response
+            const terminal = resolveStreamTerminalPayload(payload)
+            if (!assistantContent && typeof terminal?.response === 'string') {
+              assistantContent = terminal.response
             }
-            const runMetrics = payload?.run_metrics as RunMetricsSummary | undefined
+            const runMetrics = terminal?.run_metrics as RunMetricsSummary | undefined
             if (runMetrics && onRunMetrics) onRunMetrics(runMetrics)
-            applyMemoryPayload(payload)
+            applyMemoryPayload(terminal)
           }
 
           if (assistantContent) {
@@ -587,7 +609,7 @@ export default function ChatPanel({
         }
         if (result.interrupted && result.execution_ref?.interrupt_type === 'plan_confirm') {
           setPlanPending({ executionRef: result.execution_ref, todos: result.todos })
-        } else         if (result.interrupted && result.execution_ref?.interrupt_type === 'tool_approval') {
+        } else if (result.interrupted && result.execution_ref?.interrupt_type === 'tool_approval') {
           setApprovalPending(true)
         }
         applyMemoryPayload(result as unknown as Record<string, unknown>)
