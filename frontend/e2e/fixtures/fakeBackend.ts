@@ -35,6 +35,9 @@ export interface FakeStore {
   lastApprovalResume: Record<string, unknown> | null
   lastCancelRun: Record<string, unknown> | null
   attachments: Record<string, Record<string, unknown>>
+  lastVoiceTranscription: Record<string, unknown> | null
+  lastVoiceSpeech: Record<string, unknown> | null
+  lastVoiceCapabilities: Record<string, unknown> | null
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
@@ -78,6 +81,9 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     lastApprovalResume: null,
     lastCancelRun: null,
     attachments: {},
+    lastVoiceTranscription: null,
+    lastVoiceSpeech: null,
+    lastVoiceCapabilities: null,
     hangReleases,
     releaseHangStreams() {
       while (hangReleases.length) hangReleases.pop()?.()
@@ -93,6 +99,9 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.lastApprovalResume = null
       store.lastCancelRun = null
       store.attachments = {}
+      store.lastVoiceTranscription = null
+      store.lastVoiceSpeech = null
+      store.lastVoiceCapabilities = null
       store.authenticated = !store.loginRequired
       store.releaseHangStreams()
     },
@@ -285,6 +294,52 @@ export async function installFakeBackend(
           error: '',
         },
       })
+    }
+    if (path.includes('/voice/capabilities')) {
+      store.lastVoiceCapabilities = { at: nowIso() }
+      return json(route, {
+        provider: 'fake',
+        stt: {
+          status: 'configured',
+          model: 'fake-stt',
+          formats: ['webm', 'wav', 'mp3'],
+          max_upload_bytes: 26214400,
+          max_duration_seconds: 600,
+        },
+        tts: {
+          status: 'configured',
+          model: 'fake-tts',
+          voice: 'fake-voice',
+          formats: ['mp3'],
+          max_text_chars: 4096,
+        },
+        browser_fallback: true,
+      })
+    }
+    if (path.endsWith('/voice/transcriptions') && method === 'POST') {
+      store.lastVoiceTranscription = { at: nowIso() }
+      return json(route, {
+        text: 'E2E fake transcript',
+        language: 'zh',
+        duration_seconds: 1.2,
+        provider: 'fake',
+        model: 'fake-stt',
+        trace_id: 'voice-trace-e2e',
+        duration_ms: 42,
+      })
+    }
+    if (path.endsWith('/voice/speech') && method === 'POST') {
+      store.lastVoiceSpeech = request.postDataJSON() as Record<string, unknown>
+      await route.fulfill({
+        status: 200,
+        contentType: 'audio/mpeg',
+        headers: {
+          'Cache-Control': 'no-store',
+          'X-Voice-Trace-Id': 'voice-tts-e2e',
+        },
+        body: Buffer.from('FAKE-MP3-E2E'),
+      })
+      return
     }
     if (path.endsWith('/providers/config')) {
       return json(route, { provider: 'fake', model: 'fake-model' })

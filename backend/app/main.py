@@ -27,6 +27,7 @@ from app.api.routes import (
     skills,
     tasks,
     tools,
+    voice,
 )
 from app.core.config import settings
 from app.core.observability import setup_logging
@@ -103,6 +104,7 @@ app.include_router(skills.router, prefix=API_PREFIX)
 app.include_router(agents.router, prefix=API_PREFIX)
 app.include_router(attachments.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
+app.include_router(voice.router, prefix=API_PREFIX)
 app.include_router(plugins.router, prefix=API_PREFIX)
 app.include_router(plugins.commands_router, prefix=API_PREFIX)
 

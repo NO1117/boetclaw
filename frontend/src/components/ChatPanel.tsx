@@ -9,7 +9,6 @@ import {
   Mic,
   MicOff,
   Paperclip,
-  Pause,
   Send,
   Square,
   User,
@@ -47,14 +46,25 @@ import {
   type QueuedAttachment,
 } from '../utils/attachments'
 import {
-  createSpeechRecognition,
   getSpeechRecognitionCtor,
-  mapSpeechError,
-  mergeTranscript,
-  type SpeechInputState,
 } from '../utils/speechInput'
-import { isSpeechSynthesisSupported, SpeechPlaybackController } from '../utils/speechOutput'
+import {
+  VoiceInputController,
+  formatRecordingDuration,
+  voiceInputBusy,
+  voiceStatusLabel,
+  type VoiceInputMode,
+  type VoiceInputState,
+} from '../utils/voiceInput'
+import {
+  VoicePlaybackController,
+  type VoiceOutputMode,
+  type VoicePlaybackProgress,
+} from '../utils/voiceOutput'
+import MessageVoicePlayer from './MessageVoicePlayer'
+import type { VoiceCapabilities } from '../services/api'
 import './ChatPanel.css'
+import './MessageVoicePlayer.css'
 
 interface Props {
   threadId: string | null
@@ -82,9 +92,7 @@ const QUICK_PROMPTS = [
 ]
 
 function formatSpeechDuration(seconds: number): string {
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-  const ss = String(seconds % 60).padStart(2, '0')
-  return `${mm}:${ss}`
+  return formatRecordingDuration(seconds)
 }
 
 export default function ChatPanel({
@@ -110,22 +118,26 @@ export default function ChatPanel({
   const [useStream, setUseStream] = useState(true)
   const [planPending, setPlanPending] = useState<PlanPending | null>(null)
   const [approvalPending, setApprovalPending] = useState(false)
-  const [speechState, setSpeechState] = useState<SpeechInputState>(
+  const [speechState, setSpeechState] = useState<VoiceInputState>(
     getSpeechRecognitionCtor() ? 'idle' : 'unsupported',
   )
+  const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>('none')
+  const [voiceCaps, setVoiceCaps] = useState<VoiceCapabilities | null>(null)
+  const [voiceError, setVoiceError] = useState('')
   const [speechSeconds, setSpeechSeconds] = useState(0)
   const [speechPreview, setSpeechPreview] = useState('')
   const [activeSpeechMessage, setActiveSpeechMessage] = useState<number | null>(null)
   const [speechPlaybackState, setSpeechPlaybackState] = useState<'idle' | 'playing' | 'paused' | 'unsupported'>(
-    isSpeechSynthesisSupported() ? 'idle' : 'unsupported',
+    'idle',
   )
+  const [voiceOutputMode, setVoiceOutputMode] = useState<VoiceOutputMode>('none')
+  const [playbackProgress, setPlaybackProgress] = useState<VoicePlaybackProgress>({ current: 0, duration: 0 })
+  const [lastVoiceInsert, setLastVoiceInsert] = useState('')
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamControlRef = useRef<StreamControl | null>(null)
-  const speechRecognitionRef = useRef<ReturnType<typeof createSpeechRecognition> | null>(null)
-  const speechBaseRef = useRef('')
-  const speechTimerRef = useRef<number | null>(null)
-  const speechControllerRef = useRef(new SpeechPlaybackController())
+  const voiceInputRef = useRef<VoiceInputController | null>(null)
+  const speechControllerRef = useRef(new VoicePlaybackController())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -148,11 +160,38 @@ export default function ChatPanel({
     onComposerAttachmentsChange?.(attachments.length, items)
   }, [attachments, onComposerAttachmentsChange])
 
+  useEffect(() => {
+    const controller = new VoiceInputController({
+      onStateChange: setSpeechState,
+      onSecondsChange: setSpeechSeconds,
+      onPreviewChange: setSpeechPreview,
+      onTranscript: (text, mode) => {
+        setInput(text)
+        setVoiceInputMode(mode)
+        const insert = voiceInputRef.current?.getLastInsert() ?? ''
+        if (insert) setLastVoiceInsert(insert)
+      },
+      onError: message => setVoiceError(message),
+    })
+    voiceInputRef.current = controller
+    speechControllerRef.current.setCallbacks(setSpeechPlaybackState, setPlaybackProgress)
+    void (async () => {
+      const caps = await controller.loadCapabilities()
+      setVoiceCaps(caps)
+      setVoiceInputMode(controller.getMode())
+      await speechControllerRef.current.loadCapabilities()
+      setVoiceOutputMode(speechControllerRef.current.mode)
+    })()
+    return () => {
+      controller.dispose()
+      speechControllerRef.current.cancel()
+    }
+  }, [])
+
   useEffect(() => () => {
     if (streamControlRef.current) void streamControlRef.current.stop()
-    speechRecognitionRef.current?.abort()
+    voiceInputRef.current?.dispose()
     speechControllerRef.current.cancel()
-    if (speechTimerRef.current) window.clearInterval(speechTimerRef.current)
   }, [])
 
   const canSend = useMemo(() => {
@@ -359,63 +398,22 @@ export default function ChatPanel({
   }
 
   const stopSpeechInput = () => {
-    speechRecognitionRef.current?.stop()
-    speechRecognitionRef.current = null
-    if (speechTimerRef.current) {
-      window.clearInterval(speechTimerRef.current)
-      speechTimerRef.current = null
-    }
-    setSpeechPreview('')
-    setSpeechState(getSpeechRecognitionCtor() ? 'idle' : 'unsupported')
+    void voiceInputRef.current?.stop()
   }
 
-  const startSpeechInput = () => {
-    const recognition = createSpeechRecognition('zh-CN')
-    if (!recognition) {
-      setSpeechState('unsupported')
-      return
-    }
-    setAttachmentError('')
-    speechBaseRef.current = input
-    setSpeechSeconds(0)
-    setSpeechPreview('')
-    speechRecognitionRef.current = recognition
-    recognition.onresult = (event) => {
-      const merged = mergeTranscript(speechBaseRef.current, event.results, event.resultIndex)
-      if (merged.text !== speechBaseRef.current) {
-        speechBaseRef.current = merged.text
-        setInput(merged.text)
-      }
-      setSpeechPreview(merged.interim || merged.text)
-    }
-    recognition.onerror = (event) => {
-      setSpeechState(mapSpeechError(event.error))
-      stopSpeechInput()
-    }
-    recognition.onend = () => {
-      if (speechTimerRef.current) {
-        window.clearInterval(speechTimerRef.current)
-        speechTimerRef.current = null
-      }
-      setSpeechPreview('')
-      setSpeechState(getSpeechRecognitionCtor() ? 'idle' : 'unsupported')
-      speechRecognitionRef.current = null
-    }
-    try {
-      recognition.start()
-      setSpeechState('listening')
-      speechTimerRef.current = window.setInterval(() => setSpeechSeconds(v => v + 1), 1000)
-    } catch {
-      setSpeechState('error')
-    }
+  const cancelSpeechInput = () => {
+    voiceInputRef.current?.cancel()
+    setVoiceError('')
   }
 
   const toggleSpeechInput = () => {
-    if (speechState === 'listening') {
-      stopSpeechInput()
-      return
-    }
-    startSpeechInput()
+    void voiceInputRef.current?.toggle(input)
+  }
+
+  const undoVoiceInsert = () => {
+    if (!voiceInputRef.current || !lastVoiceInsert) return
+    setInput(voiceInputRef.current.undoLastInsert(input))
+    setLastVoiceInsert('')
   }
 
   const handleSend = async () => {
@@ -602,8 +600,7 @@ export default function ChatPanel({
     }
   }
 
-  const speakMessage = (index: number, content: string) => {
-    speechControllerRef.current.cancel()
+  const speakMessage = async (index: number, content: string) => {
     if (activeSpeechMessage === index && speechPlaybackState === 'playing') {
       setSpeechPlaybackState(speechControllerRef.current.pause())
       return
@@ -612,18 +609,29 @@ export default function ChatPanel({
       setSpeechPlaybackState(speechControllerRef.current.resume())
       return
     }
+    speechControllerRef.current.cancel()
     setActiveSpeechMessage(index)
-    setSpeechPlaybackState(speechControllerRef.current.speak(content))
+    setVoiceOutputMode(speechControllerRef.current.mode)
+    await speechControllerRef.current.speak(content)
+    setVoiceOutputMode(speechControllerRef.current.mode)
   }
 
   const stopSpeechOutput = () => {
     setSpeechPlaybackState(speechControllerRef.current.stop())
     setActiveSpeechMessage(null)
+    setPlaybackProgress({ current: 0, duration: 0 })
   }
 
-  useEffect(() => {
-    return () => speechControllerRef.current.cancel()
-  }, [])
+  const downloadSpeech = async () => {
+    const blob = await speechControllerRef.current.downloadBlob()
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = speechControllerRef.current.downloadFilename()
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -686,25 +694,34 @@ export default function ChatPanel({
                 </div>
               )}
               {msg.role === 'assistant' && (
-                <div className="message-actions">
-                  <button
-                    type="button"
-                    className="message-action-btn"
-                    aria-label="朗读回复"
-                    onClick={() => speakMessage(i, msg.content)}
-                  >
-                    {activeSpeechMessage === i && speechPlaybackState === 'playing' ? <Pause size={14} /> : <Volume2 size={14} />}
-                    朗读
-                  </button>
-                  {activeSpeechMessage === i && speechPlaybackState !== 'idle' && speechPlaybackState !== 'unsupported' && (
-                    <button type="button" className="message-action-btn" onClick={stopSpeechOutput}>
-                      <Square size={14} /> 停止
-                    </button>
+                <>
+                  {activeSpeechMessage === i && speechPlaybackState !== 'idle' && speechPlaybackState !== 'unsupported' ? (
+                    <MessageVoicePlayer
+                      mode={voiceOutputMode}
+                      state={speechPlaybackState}
+                      progress={playbackProgress}
+                      providerLabel={voiceCaps?.provider ?? null}
+                      onTogglePlay={() => void speakMessage(i, msg.content)}
+                      onStop={stopSpeechOutput}
+                      onDownload={() => void downloadSpeech()}
+                    />
+                  ) : (
+                    <div className="message-actions">
+                      <button
+                        type="button"
+                        className="message-action-btn"
+                        aria-label="朗读回复"
+                        onClick={() => void speakMessage(i, msg.content)}
+                      >
+                        <Volume2 size={14} />
+                        朗读
+                      </button>
+                      <button type="button" className="message-action-btn" aria-label="复制回复" onClick={() => void copyMessage(msg.content)}>
+                        <Copy size={14} /> 复制
+                      </button>
+                    </div>
                   )}
-                  <button type="button" className="message-action-btn" aria-label="复制回复" onClick={() => void copyMessage(msg.content)}>
-                    <Copy size={14} /> 复制
-                  </button>
-                </div>
+                </>
               )}
             </div>
           </div>
@@ -788,6 +805,37 @@ export default function ChatPanel({
           </div>
         )}
 
+        {(speechState === 'recording' || speechState === 'listening' || speechState === 'preparing') && (
+          <div className="voice-recording-bar" role="status" aria-live="polite">
+            <div className="voice-recording-title">
+              ● {voiceStatusLabel(speechState, voiceInputMode)} {formatSpeechDuration(speechSeconds)}
+            </div>
+            <div className="voice-recording-wave" aria-hidden>
+              ▏▃▆█▅▂ ▂▅█▆▃▏ ▏▃▆█▅▂ ▂▅█▆▃▏
+            </div>
+            <div className="voice-recording-actions">
+              {speechState === 'recording' && voiceInputMode === 'server' && (
+                <button type="button" onClick={stopSpeechInput}>■ 停止并转写</button>
+              )}
+              {(speechState === 'listening' || speechState === 'recording') && (
+                <button type="button" onClick={cancelSpeechInput}>× 取消</button>
+              )}
+              <span className="voice-recording-hint">
+                {voiceInputMode === 'server'
+                  ? '服务端高质量 · 音频不保存'
+                  : '浏览器本地识别 · 不会自动发送'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {(speechState === 'uploading' || speechState === 'transcribing') && (
+          <div className="voice-recording-bar" role="status" aria-live="polite">
+            <div className="voice-recording-title">{voiceStatusLabel(speechState, voiceInputMode)}</div>
+            <div className="voice-recording-hint">可继续编辑文本，转写完成后将追加到输入框</div>
+          </div>
+        )}
+
         <div className="composer-input-wrap">
           <textarea
             value={speechPreview || input}
@@ -795,20 +843,26 @@ export default function ChatPanel({
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend() } }}
             placeholder="输入消息，或点击麦克风说话…"
             rows={3}
-            disabled={loading || speechState === 'listening'}
+            disabled={loading}
             aria-label="消息输入"
           />
-          {speechState === 'listening' && (
+          {speechState === 'listening' && voiceInputMode === 'browser' && (
             <div className="speech-live mono" role="status" aria-live="polite">
               ● 正在聆听 {formatSpeechDuration(speechSeconds)}
             </div>
           )}
+          {lastVoiceInsert && (
+            <button type="button" className="voice-undo-btn" onClick={undoVoiceInsert}>
+              撤销本次语音插入
+            </button>
+          )}
         </div>
 
-        {(attachmentError || sendError || visionBlocked) && (
+        {(attachmentError || sendError || visionBlocked || voiceError) && (
           <div className="composer-errors" role="alert">
             {attachmentError && <p>{attachmentError}</p>}
             {sendError && <p>{sendError}</p>}
+            {voiceError && <p>{voiceError}</p>}
             {visionBlocked && <p>当前模型不支持图像输入，请切换模型或移除图片附件。</p>}
           </div>
         )}
@@ -829,19 +883,21 @@ export default function ChatPanel({
             </button>
             <button
               type="button"
-              className={`tool-btn${speechState === 'listening' ? ' active' : ''}`}
+              className={`tool-btn${['listening', 'recording', 'preparing'].includes(speechState) ? ' active' : ''}`}
               aria-label="语音输入"
-              disabled={speechState === 'unsupported'}
+              disabled={speechState === 'unsupported' || voiceInputBusy(speechState)}
               title={
                 speechState === 'unsupported'
-                  ? '当前浏览器不支持语音识别'
+                  ? '当前浏览器不支持语音输入'
                   : speechState === 'permission-denied'
                     ? '麦克风权限被拒绝'
-                    : '语音输入（不会自动发送）'
+                    : voiceInputMode === 'server'
+                      ? '服务端转写（不会自动发送）'
+                      : '浏览器识别（不会自动发送）'
               }
               onClick={toggleSpeechInput}
             >
-              {speechState === 'listening' ? <MicOff size={14} /> : <Mic size={14} />}
+              {['listening', 'recording'].includes(speechState) ? <MicOff size={14} /> : <Mic size={14} />}
               语音
             </button>
           </div>
@@ -866,7 +922,10 @@ export default function ChatPanel({
           </div>
         </div>
         {speechState === 'unsupported' && (
-          <p className="composer-footnote" role="status">当前浏览器不支持 Web Speech API。</p>
+          <p className="composer-footnote" role="status">当前环境不支持语音输入；可在设置中查看语音能力状态。</p>
+        )}
+        {voiceCaps && voiceInputMode === 'browser' && voiceCaps.stt.status !== 'configured' && (
+          <p className="composer-footnote" role="status">服务端转写未配置，当前使用浏览器本地识别。</p>
         )}
       </div>
     </div>

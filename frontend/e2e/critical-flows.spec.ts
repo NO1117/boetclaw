@@ -201,9 +201,22 @@ test.describe('routing and agent workspace', () => {
     await expect(page).toHaveURL(/\/settings\/security$/)
     await expect(page.getByText('ToolGuard 策略')).toBeVisible()
 
+    await page.goto('/settings/providers')
+    await expect(page.getByRole('heading', { level: 3, name: '模型 Provider' })).toBeVisible()
+
     await page.goto('/agents/workspace-a')
     await expect(page).toHaveURL(/\/agents\/workspace-a$/)
     await expect(page.getByRole('heading', { name: 'Agent workspace-a' })).toBeVisible()
     await expect(page.getByPlaceholder('搜索 Agent…')).toBeVisible()
+  })
+})
+
+test.describe('voice capabilities', () => {
+  test('设置页展示 fake 语音能力状态', async ({ page, fakeBackend }) => {
+    await page.goto('/settings/providers')
+    await expect(page.getByLabel('语音能力状态')).toBeVisible()
+    await expect.poll(() => fakeBackend.lastVoiceCapabilities).not.toBeNull()
+    await expect(page.getByText('● 服务端已配置')).toBeVisible()
+    await expect(page.getByText('fake-stt')).toBeVisible()
   })
 })

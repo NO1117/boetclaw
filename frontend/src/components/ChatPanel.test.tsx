@@ -6,6 +6,7 @@ import {
   streamChat,
   uploadAgentAttachment,
   fetchAttachmentRecord,
+  fetchVoiceCapabilities,
   type StreamControl,
 } from '../services/api'
 
@@ -20,6 +21,9 @@ vi.mock('../services/api', () => ({
   fetchApprovals: vi.fn(),
   resumeApproval: vi.fn(),
   confirmPlan: vi.fn(),
+  fetchVoiceCapabilities: vi.fn(),
+  transcribeVoiceAudio: vi.fn(),
+  synthesizeVoiceSpeech: vi.fn(),
 }))
 
 const readyRecord = {
@@ -43,8 +47,15 @@ beforeEach(() => {
   vi.mocked(streamChat).mockReset()
   vi.mocked(uploadAgentAttachment).mockReset()
   vi.mocked(fetchAttachmentRecord).mockReset()
+  vi.mocked(fetchVoiceCapabilities).mockReset()
   vi.mocked(uploadAgentAttachment).mockResolvedValue({ ...readyRecord, status: 'uploaded' })
   vi.mocked(fetchAttachmentRecord).mockResolvedValue(readyRecord)
+  vi.mocked(fetchVoiceCapabilities).mockResolvedValue({
+    provider: 'fake',
+    stt: { status: 'unconfigured', model: null, formats: [], max_upload_bytes: 0, max_duration_seconds: 0 },
+    tts: { status: 'unconfigured', model: null, voice: null, formats: [], max_text_chars: 0 },
+    browser_fallback: true,
+  })
 })
 
 describe('ChatPanel', () => {
@@ -153,7 +164,7 @@ describe('ChatPanel', () => {
         onTraceUpdate={vi.fn()}
       />,
     )
-    expect(screen.getByText(/不支持 Web Speech API/)).toBeVisible()
+    expect(screen.getByText(/当前环境不支持语音输入/)).toBeVisible()
     expect(screen.getByRole('button', { name: '语音输入' })).toBeDisabled()
   })
 })

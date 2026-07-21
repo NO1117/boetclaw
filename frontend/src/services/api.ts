@@ -600,6 +600,98 @@ export async function deleteAgentAttachment(agentId: string, attachmentId: strin
   if (!res.ok) throw new Error(await res.text())
 }
 
+// ----- Voice (STT/TTS) -----
+export type VoiceAvailability = 'configured' | 'unconfigured' | 'unavailable' | 'unknown'
+
+export interface VoiceCapabilities {
+  provider: string
+  stt: {
+    status: VoiceAvailability
+    model: string | null
+    formats: string[]
+    max_upload_bytes: number
+    max_duration_seconds: number
+  }
+  tts: {
+    status: VoiceAvailability
+    model: string | null
+    voice: string | null
+    formats: string[]
+    max_text_chars: number
+  }
+  browser_fallback: boolean
+}
+
+export interface VoiceTranscriptionResult {
+  text: string
+  language: string | null
+  duration_seconds: number | null
+  provider: string | null
+  model: string | null
+  trace_id: string
+  duration_ms: number | null
+}
+
+export interface VoiceSpeechRequest {
+  text: string
+  language?: string
+  voice?: string
+  format?: string
+}
+
+function parseVoiceError(body: string, status: number): Error {
+  try {
+    const parsed = JSON.parse(body) as { detail?: { code?: string; message?: string } | string }
+    const detail = parsed.detail
+    if (detail && typeof detail === 'object' && detail.message) {
+      return new Error(detail.message)
+    }
+    if (typeof detail === 'string') return new Error(detail)
+  } catch { /* ignore */ }
+  return new Error(`语音请求失败 (${status})`)
+}
+
+export async function fetchVoiceCapabilities(): Promise<VoiceCapabilities> {
+  const res = await fetch(`${API_BASE}/voice/capabilities`, { headers: consoleAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function transcribeVoiceAudio(
+  file: File,
+  language?: string,
+  signal?: AbortSignal,
+): Promise<VoiceTranscriptionResult> {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  if (language) form.append('language', language)
+  const res = await fetch(`${API_BASE}/voice/transcriptions`, {
+    method: 'POST',
+    headers: consoleAuthHeaders(),
+    body: form,
+    signal,
+  })
+  if (!res.ok) throw parseVoiceError(await res.text(), res.status)
+  return res.json()
+}
+
+export async function synthesizeVoiceSpeech(
+  payload: VoiceSpeechRequest,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/voice/speech`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...consoleAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+    signal,
+  })
+  if (!res.ok) throw parseVoiceError(await res.text(), res.status)
+  return res.blob()
+}
+
 export async function sendChat(
   message: string,
   threadId?: string,

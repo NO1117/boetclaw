@@ -46,6 +46,7 @@ class EventType(str, Enum):
     PROVIDER_RETRY = "provider_retry"
     MEMORY_PERSIST = "memory_persist"
     MEMORY_SKIP = "memory_skip"
+    VOICE_STAGE = "voice_stage"
 
 
 @dataclass

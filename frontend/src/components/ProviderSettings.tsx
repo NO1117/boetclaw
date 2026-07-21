@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Cpu, Wifi, WifiOff } from 'lucide-react'
+import VoiceCapabilityCard from './VoiceCapabilityCard'
 import {
   fetchProviders,
   fetchDefaultProviderConfig,
@@ -195,6 +196,8 @@ export default function ProviderSettings() {
           </div>
         </>
       )}
+
+      <VoiceCapabilityCard />
     </div>
   )
 }

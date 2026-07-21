@@ -80,6 +80,24 @@ class Settings(BaseSettings):
     context_keep_messages: int = 20
     context_trigger_tokens: int = 4000
 
+    # Speech / Voice (STT/TTS, decoupled from chat models)
+    speech_provider: str = "openai_compatible"
+    speech_api_key: str = ""
+    speech_base_url: str = ""
+    speech_stt_model: str = "whisper-1"
+    speech_tts_model: str = "tts-1"
+    speech_tts_voice: str = "alloy"
+    speech_tts_format: str = "mp3"
+    speech_max_upload_bytes: int = 25 * 1024 * 1024
+    speech_max_duration_seconds: int = 600
+    speech_max_text_chars: int = 4096
+    speech_rate_limit_per_minute: int = 30
+    speech_max_concurrent: int = 4
+    speech_timeout_seconds: int = 120
+    speech_temp_ttl_seconds: int = 300
+    speech_stt_price_per_minute: float = 0.0
+    speech_tts_price_per_million_chars: float = 0.0
+
     # Attachments
     attachment_ttl_days: int = 30
     attachment_chunk_max_chars: int = 4000
