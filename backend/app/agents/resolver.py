@@ -38,19 +38,29 @@ async def resolve_agent_graph(agent_id: str) -> Any:
 
 
 def _skills_fingerprint(agent_id: str) -> str:
+    profile_revision = "0"
+    try:
+        from app.agents.profile.service import profile_service
+
+        profile_revision = str(profile_service.get_or_create(agent_id).revision)
+    except Exception:  # noqa: BLE001
+        pass
     if agent_id == "default":
         skills_path = settings.skills_dir
         if skills_path.exists():
             names = sorted(p.name for p in skills_path.iterdir() if p.is_dir())
-            return hashlib.sha256("|".join(names).encode()).hexdigest()[:16]
-        return "default-skills"
+            base = hashlib.sha256("|".join(names).encode()).hexdigest()[:16]
+        else:
+            base = "default-skills"
+        return f"{base}|p{profile_revision}"
     from app.agents.multi_agent_manager import multi_agent_manager
 
     root = multi_agent_manager._root / agent_id
     if root.is_dir():
         names = sorted(p.name for p in root.iterdir() if p.is_dir())
-        return hashlib.sha256("|".join(names).encode()).hexdigest()[:16]
-    return f"agent-{agent_id}"
+        base = hashlib.sha256("|".join(names).encode()).hexdigest()[:16]
+        return f"{base}|p{profile_revision}"
+    return f"agent-{agent_id}|p{profile_revision}"
 
 
 async def _checkpoint_identity(agent_id: str) -> str:

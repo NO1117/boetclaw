@@ -13,7 +13,7 @@ type Fixtures = {
 export const test = base.extend<Fixtures>({
   fakeBackendOptions: [{}, { option: true }],
 
-  fakeBackend: async ({ page, context, fakeBackendOptions }, use, testInfo) => {
+  fakeBackend: [async ({ page, context, fakeBackendOptions }, use, testInfo) => {
     const logs: string[] = []
     page.on('console', msg => {
       logs.push(`[${msg.type()}] ${msg.text()}`)
@@ -61,7 +61,7 @@ export const test = base.extend<Fixtures>({
     }
 
     store.releaseHangStreams()
-  },
+  }, { auto: true }],
 })
 
 export { expect }

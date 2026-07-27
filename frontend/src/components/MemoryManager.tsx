@@ -88,7 +88,7 @@ export default function MemoryManager({ agentId }: Props) {
     URL.revokeObjectURL(url)
   }
 
-  const disabled = health?.status === 'disabled' || health?.status === 'error'
+  const disabled = health?.status === 'disabled'
 
   return (
     <div role="region" aria-label="长期记忆管理">

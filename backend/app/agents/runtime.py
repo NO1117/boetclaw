@@ -44,6 +44,17 @@ async def invoke_agent(
         well_id=well_id,
     )
 
+    snapshot_token = None
+    try:
+        from app.agents.profile.models import EffectiveAgentConfig
+        from app.agents.profile.service import profile_service
+        from app.agents.profile.snapshot import reset_run_snapshot, set_run_snapshot
+
+        effective = profile_service.effective_for_agent(agent_id)
+        snapshot_token = set_run_snapshot(EffectiveAgentConfig.model_validate(effective).model_dump())
+    except Exception:  # noqa: BLE001
+        snapshot_token = None
+
     try:
         source = normalize_source(source)
         persist_memory = should_persist_memory(source)
@@ -160,6 +171,10 @@ async def invoke_agent(
             "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
+        if snapshot_token is not None:
+            from app.agents.profile.snapshot import reset_run_snapshot
+
+            reset_run_snapshot(snapshot_token)
         reset_run_context(context_tokens)
 
 
@@ -288,6 +303,16 @@ async def stream_agent(
         agent_id=agent_id,
         thread_id=thread_id,
     )
+    snapshot_token = None
+    try:
+        from app.agents.profile.models import EffectiveAgentConfig
+        from app.agents.profile.service import profile_service
+        from app.agents.profile.snapshot import set_run_snapshot
+
+        effective = profile_service.effective_for_agent(agent_id)
+        snapshot_token = set_run_snapshot(EffectiveAgentConfig.model_validate(effective).model_dump())
+    except Exception:  # noqa: BLE001
+        snapshot_token = None
     source = normalize_source(source)
     persist_memory = should_persist_memory(source)
     plan_mode = message.strip().startswith("/plan")
@@ -429,6 +454,10 @@ async def stream_agent(
             "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
+        if snapshot_token is not None:
+            from app.agents.profile.snapshot import reset_run_snapshot
+
+            reset_run_snapshot(snapshot_token)
         reset_run_context(context_tokens)
 
 

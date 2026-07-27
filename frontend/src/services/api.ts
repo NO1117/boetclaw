@@ -917,6 +917,61 @@ export interface AgentInfo {
   loaded: boolean
   skills_count: number
   config: Record<string, unknown>
+  profile?: {
+    display_name?: string
+    enabled?: boolean
+    revision?: number
+  }
+}
+
+export interface AgentProfileConfigured {
+  display_name: string
+  description: string
+  avatar_color: string
+  system_prompt: string
+  provider: string
+  model: string
+  temperature: number | null
+  max_output_tokens: number | null
+  tool_policy: 'inherit' | 'safe_only' | 'allowlist'
+  tool_allowlist: string[]
+  memory_mode: 'inherit' | 'off' | 'review' | 'auto'
+  default_language: string
+  enabled: boolean
+}
+
+export interface AgentProfileResponse {
+  agent_id: string
+  configured: AgentProfileConfigured
+  effective: AgentProfileConfigured & { model_string?: string; revision?: number }
+  revision: number
+  apply_state: {
+    revision: number
+    status: 'applied' | 'failed' | 'pending'
+    applied_at: string
+    error_summary: string
+  }
+}
+
+export interface AgentProfileValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export interface AgentProfileVersionSummary {
+  revision: number
+  created_at: string
+  changed_fields: string[]
+  operator: string
+}
+
+export interface AgentProfileVersionDetail {
+  agent_id: string
+  revision: number
+  record: AgentProfileVersionSummary
+  snapshot: Record<string, unknown>
+  diff_from_current: string[]
 }
 
 export interface AgentFileInfo {
@@ -977,6 +1032,117 @@ export async function deleteAgent(
 ): Promise<{ deleted: string; purged: boolean; checkpoint_retained: boolean; detail: string }> {
   const qs = options?.purge ? '?purge=true' : ''
   const res = await fetch(`${API_BASE}/agents/${agentId}${qs}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchAgentProfile(agentId: string): Promise<AgentProfileResponse> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateAgentProfile(
+  agentId: string,
+  revision: number,
+  profile: Partial<AgentProfileConfigured>,
+): Promise<AgentProfileResponse> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision, profile }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function validateAgentProfile(
+  agentId: string,
+  profile: Partial<AgentProfileConfigured>,
+  revision?: number,
+): Promise<AgentProfileValidationResult> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision: revision ?? null, profile }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchAgentProfileVersions(
+  agentId: string,
+  offset = 0,
+  limit = 20,
+): Promise<{ agent_id: string; total: number; offset: number; limit: number; versions: AgentProfileVersionSummary[] }> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile/versions?offset=${offset}&limit=${limit}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchAgentProfileVersionDetail(
+  agentId: string,
+  revision: number,
+): Promise<AgentProfileVersionDetail> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile/versions/${revision}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function rollbackAgentProfile(
+  agentId: string,
+  targetRevision: number,
+): Promise<AgentProfileResponse> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/profile/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_revision: targetRevision, confirm: true }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cloneAgent(
+  agentId: string,
+  options?: { newAgentId?: string; copySkills?: boolean },
+): Promise<AgentProfileResponse> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/clone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      new_agent_id: options?.newAgentId ?? null,
+      copy_skills: options?.copySkills ?? false,
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function exportAgentProfile(agentId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/export`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function importAgentProfile(payload: Record<string, unknown>, agentId?: string): Promise<AgentProfileResponse> {
+  const res = await fetch(`${API_BASE}/agents/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId ?? null, payload }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function createAgentWithProfile(
+  agentId: string,
+  profile?: Partial<AgentProfileConfigured>,
+): Promise<AgentInfo> {
+  const res = await fetch(`${API_BASE}/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, config: {}, profile: profile ?? null }),
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

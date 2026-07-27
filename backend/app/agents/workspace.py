@@ -29,6 +29,18 @@ class Workspace:
         sd = self.skills_dir()
         if sd.exists():
             skills_count = len([d for d in sd.iterdir() if d.is_dir()])
+        profile_summary: dict[str, Any] = {}
+        try:
+            from app.agents.profile.service import profile_service
+
+            response = profile_service.build_response(profile_service.get_or_create(self.agent_id))
+            profile_summary = {
+                "display_name": response.configured.get("display_name", ""),
+                "enabled": response.configured.get("enabled", True),
+                "revision": response.revision,
+            }
+        except Exception:  # noqa: BLE001
+            profile_summary = {}
         return {
             "agent_id": self.agent_id,
             "root": str(self.root),
@@ -36,4 +48,5 @@ class Workspace:
             "loaded": self.agent is not None,
             "skills_count": skills_count,
             "config": self.config,
+            "profile": profile_summary,
         }

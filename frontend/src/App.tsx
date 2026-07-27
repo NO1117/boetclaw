@@ -95,7 +95,7 @@ function routeTitle(route: AppRoute): string {
     case 'tasks':
       return route.taskId ? `任务 ${route.taskId}` : '任务与追踪'
     case 'agents':
-      return route.agentId ? `Agent ${route.agentId}` : 'Agent 工作区'
+      return 'Agent 工作区'
     case 'trace':
       return route.traceId ? `Trace ${route.traceId.slice(0, 8)}` : '追踪'
     case 'settings':
@@ -340,6 +340,7 @@ export default function App() {
               <button
                 type="button"
                 className="topbar-primary"
+                aria-label="＋ 新建 Agent"
                 onClick={() => setAgentCreateTrigger(v => v + 1)}
               >
                 ＋ 新建 Agent

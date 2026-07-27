@@ -72,10 +72,20 @@ class MultiAgentManager:
                 continue
             if agent_id not in self._ws:
                 self._ws[agent_id] = Workspace(agent_id=agent_id, root=child)
+                try:
+                    from app.agents.profile.service import profile_service
+
+                    ws = self._ws[agent_id]
+                    profile = profile_service.get_or_create(agent_id)
+                    ws.config = profile.editable_dict()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("profile_discover_failed", agent_id=agent_id, error=str(exc))
 
     def _build_agent(self, ws: Workspace, *, model: Any | None = None) -> Any:
         from deepagents.backends import FilesystemBackend
 
+        from app.agents.profile.service import profile_service
+        from app.agents.profile.validator import filter_tools_for_policy, resolve_effective
         from app.core.agent_factory import BoetClawAgentFactory, setup_env
         from app.memory.store_backend import get_memory_files, get_store
         from app.skills_system.registry import resolve_effective_skills
@@ -83,6 +93,10 @@ class MultiAgentManager:
         setup_env()
         ws.root.mkdir(parents=True, exist_ok=True)
         ws.files_dir().mkdir(parents=True, exist_ok=True)
+
+        profile = profile_service.get_or_create(ws.agent_id)
+        effective = resolve_effective(profile)
+        ws.config = profile.editable_dict()
 
         skills = resolve_effective_skills(workspace_dir=ws.root, channel="console")
 
@@ -95,7 +109,27 @@ class MultiAgentManager:
         }
         if model is not None:
             kwargs["model"] = model
-        return BoetClawAgentFactory.build(**kwargs)
+        elif profile.provider.strip() or profile.model.strip():
+            from app.providers.manager import provider_manager
+
+            kwargs["model"] = provider_manager.get_chat_model(effective.model_string)
+
+        allowed_tools = filter_tools_for_policy(profile.tool_policy, profile.tool_allowlist)
+        if allowed_tools is not None:
+            from app.tools.builtin import get_builtin_tools
+            from app.tools.mcp_manager import mcp_manager
+            from app.plugins.registry import plugin_registry
+
+            all_tools = list(get_builtin_tools()) + list(mcp_manager.tools) + list(plugin_registry.enabled_tools())
+            kwargs["tools"] = [tool for tool in all_tools if tool.name in allowed_tools]
+
+        agent = BoetClawAgentFactory.build(**kwargs)
+        if profile.system_prompt.strip():
+            try:
+                agent = agent.with_config({"system_prompt": profile.system_prompt})
+            except Exception:  # noqa: BLE001
+                pass
+        return agent
 
     def build_agent_with_model(self, ws: Workspace, model: Any) -> Any:
         """Build a fresh workspace graph with an override model; does not cache it."""
@@ -163,6 +197,14 @@ class MultiAgentManager:
         self._deleted_marker(agent_id).unlink(missing_ok=True)
         self._purged_marker(agent_id).unlink(missing_ok=True)
         ws.skills_dir().mkdir(parents=True, exist_ok=True)
+        from app.agents.profile.service import profile_service
+
+        profile = profile_service.get_or_create(agent_id)
+        if config:
+            merged = dict(profile.editable_dict())
+            merged.update(config)
+            profile_service.validate_payload(agent_id, merged)
+        ws.config = profile.editable_dict()
         self._ws[agent_id] = ws
         logger.info("workspace_created", agent_id=agent_id)
         return ws

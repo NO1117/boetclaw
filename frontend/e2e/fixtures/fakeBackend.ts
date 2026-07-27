@@ -40,6 +40,8 @@ export interface FakeStore {
   lastVoiceCapabilities: Record<string, unknown> | null
   memories: Record<string, Record<string, unknown>>
   memoryHealth: Record<string, unknown>
+  agentProfiles: Record<string, Record<string, unknown>>
+  agentProfileVersions: Record<string, Array<Record<string, unknown>>>
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
@@ -63,6 +65,49 @@ async function json(route: Route, body: unknown, status = 200) {
     contentType: 'application/json',
     body: JSON.stringify(body),
   })
+}
+
+function defaultProfile(agentId: string) {
+  return {
+    display_name: agentId === 'default' ? '默认智能体' : agentId,
+    description: '',
+    avatar_color: '#6366f1',
+    system_prompt: '',
+    provider: '',
+    model: '',
+    temperature: null,
+    max_output_tokens: null,
+    tool_policy: 'inherit',
+    tool_allowlist: [] as string[],
+    memory_mode: 'inherit',
+    default_language: 'zh',
+    enabled: true,
+  }
+}
+
+function profileResponse(agentId: string, store: FakeStore, revision = 1) {
+  const configured = {
+    ...defaultProfile(agentId),
+    ...(store.agentProfiles[agentId] ?? {}),
+  }
+  return {
+    agent_id: agentId,
+    configured,
+    effective: {
+      ...configured,
+      provider: configured.provider || 'fake',
+      model: configured.model || 'fake-model',
+      model_string: `${configured.provider || 'fake'}:${configured.model || 'fake-model'}`,
+      revision,
+    },
+    revision,
+    apply_state: {
+      revision,
+      status: 'applied',
+      applied_at: nowIso(),
+      error_summary: '',
+    },
+  }
 }
 
 export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
@@ -91,6 +136,14 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     lastVoiceSpeech: null,
     lastVoiceCapabilities: null,
     memories: {},
+    agentProfiles: {
+      default: defaultProfile('default'),
+      'workspace-a': defaultProfile('workspace-a'),
+    },
+    agentProfileVersions: {
+      default: [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
+      'workspace-a': [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
+    },
     memoryHealth: {
       status: 'ready',
       backend: 'sqlite',
@@ -120,6 +173,14 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.lastVoiceSpeech = null
       store.lastVoiceCapabilities = null
       store.memories = {}
+      store.agentProfiles = {
+        default: defaultProfile('default'),
+        'workspace-a': defaultProfile('workspace-a'),
+      }
+      store.agentProfileVersions = {
+        default: [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
+        'workspace-a': [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
+      }
       store.authenticated = !store.loginRequired
       store.releaseHangStreams()
     },
@@ -199,15 +260,25 @@ export async function installFakeBackend(
           root: `/workspace/agents/${a.agent_id}`,
           created_at: nowIso(),
           skills_count: 0,
-          config: {},
+          config: store.agentProfiles[a.agent_id] ?? {},
+          profile: {
+            display_name: (store.agentProfiles[a.agent_id] as { display_name?: string } | undefined)?.display_name ?? a.agent_id,
+            enabled: true,
+            revision: store.agentProfileVersions[a.agent_id]?.at(-1)?.revision ?? 1,
+          },
         })),
       })
     }
     if (path.endsWith('/agents') && method === 'POST') {
-      const body = request.postDataJSON() as { agent_id?: string }
+      const body = request.postDataJSON() as { agent_id?: string; profile?: Record<string, unknown> | null }
       const agentId = String(body.agent_id ?? '')
       if (!store.agents.some(a => a.agent_id === agentId)) {
         store.agents.push({ agent_id: agentId, loaded: false })
+        store.agentProfiles[agentId] = {
+          ...defaultProfile(agentId),
+          ...(body.profile ?? {}),
+        }
+        store.agentProfileVersions[agentId] = [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }]
       }
       return json(route, {
         agent_id: agentId,
@@ -215,8 +286,104 @@ export async function installFakeBackend(
         created_at: nowIso(),
         loaded: false,
         skills_count: 0,
-        config: {},
+        config: store.agentProfiles[agentId] ?? {},
+        profile: { display_name: agentId, enabled: true, revision: 1 },
       })
+    }
+    const profileValidateMatch = path.match(/\/agents\/([^/]+)\/profile\/validate$/)
+    if (profileValidateMatch && method === 'POST') {
+      const agentId = decodeURIComponent(profileValidateMatch[1])
+      const body = request.postDataJSON() as { profile?: Record<string, unknown> }
+      const prompt = String(body.profile?.system_prompt ?? '')
+      if (prompt.includes('api_key') || prompt.includes('sk-')) {
+        return json(route, { valid: false, errors: ['检测到疑似密钥'], warnings: [] })
+      }
+      return json(route, { valid: true, errors: [], warnings: [] })
+    }
+    const profileVersionsMatch = path.match(/\/agents\/([^/]+)\/profile\/versions$/)
+    if (profileVersionsMatch && method === 'GET') {
+      const agentId = decodeURIComponent(profileVersionsMatch[1])
+      const versions = store.agentProfileVersions[agentId] ?? []
+      return json(route, { agent_id: agentId, total: versions.length, offset: 0, limit: 20, versions: [...versions].reverse() })
+    }
+    const profileVersionDetailMatch = path.match(/\/agents\/([^/]+)\/profile\/versions\/(\d+)$/)
+    if (profileVersionDetailMatch && method === 'GET') {
+      const agentId = decodeURIComponent(profileVersionDetailMatch[1])
+      const revision = Number(profileVersionDetailMatch[2])
+      return json(route, {
+        agent_id: agentId,
+        revision,
+        record: { revision, created_at: nowIso(), changed_fields: ['display_name'], operator: 'system' },
+        snapshot: store.agentProfiles[agentId] ?? defaultProfile(agentId),
+        diff_from_current: revision === 1 ? ['display_name'] : [],
+      })
+    }
+    const profileRollbackMatch = path.match(/\/agents\/([^/]+)\/profile\/rollback$/)
+    if (profileRollbackMatch && method === 'POST') {
+      const agentId = decodeURIComponent(profileRollbackMatch[1])
+      const current = profileResponse(agentId, store, (store.agentProfileVersions[agentId]?.length ?? 1) + 1)
+      store.agentProfileVersions[agentId] = [...(store.agentProfileVersions[agentId] ?? []), { revision: current.revision, created_at: nowIso(), changed_fields: ['rollback'], operator: 'system' }]
+      return json(route, current)
+    }
+    const profileMatch = path.match(/\/agents\/([^/]+)\/profile$/)
+    if (profileMatch && method === 'GET') {
+      const agentId = decodeURIComponent(profileMatch[1])
+      const revision = store.agentProfileVersions[agentId]?.at(-1)?.revision ?? 1
+      return json(route, profileResponse(agentId, store, Number(revision)))
+    }
+    if (profileMatch && method === 'PUT') {
+      const agentId = decodeURIComponent(profileMatch[1])
+      const body = request.postDataJSON() as { revision?: number; profile?: Record<string, unknown> }
+      const currentRevision = Number(store.agentProfileVersions[agentId]?.at(-1)?.revision ?? 1)
+      if (body.revision !== currentRevision) {
+        return json(route, { detail: { message: 'revision conflict', expected_revision: body.revision, actual_revision: currentRevision } }, 409)
+      }
+      store.agentProfiles[agentId] = {
+        ...defaultProfile(agentId),
+        ...(store.agentProfiles[agentId] ?? {}),
+        ...(body.profile ?? {}),
+      }
+      const nextRevision = currentRevision + 1
+      store.agentProfileVersions[agentId] = [...(store.agentProfileVersions[agentId] ?? []), { revision: nextRevision, created_at: nowIso(), changed_fields: Object.keys(body.profile ?? {}), operator: 'api' }]
+      return json(route, profileResponse(agentId, store, nextRevision))
+    }
+    const cloneMatch = path.match(/\/agents\/([^/]+)\/clone$/)
+    if (cloneMatch && method === 'POST') {
+      const sourceId = decodeURIComponent(cloneMatch[1])
+      const body = request.postDataJSON() as { new_agent_id?: string | null }
+      const newId = body.new_agent_id || `${sourceId}-copy`
+      if (!store.agents.some(a => a.agent_id === newId)) {
+        store.agents.push({ agent_id: newId, loaded: false })
+        store.agentProfiles[newId] = {
+          ...defaultProfile(newId),
+          ...(store.agentProfiles[sourceId] ?? {}),
+          display_name: `${(store.agentProfiles[sourceId] as { display_name?: string })?.display_name ?? sourceId} (副本)`,
+        }
+        store.agentProfileVersions[newId] = [{ revision: 1, created_at: nowIso(), changed_fields: ['clone'], operator: 'system' }]
+      }
+      return json(route, profileResponse(newId, store, 1))
+    }
+    const exportMatch = path.match(/\/agents\/([^/]+)\/export$/)
+    if (exportMatch && method === 'GET') {
+      const agentId = decodeURIComponent(exportMatch[1])
+      return json(route, {
+        export_version: 1,
+        exported_at: nowIso(),
+        profile: { agent_id: agentId, ...(store.agentProfiles[agentId] ?? defaultProfile(agentId)) },
+      })
+    }
+    if (path.endsWith('/agents/import') && method === 'POST') {
+      const body = request.postDataJSON() as { agent_id?: string | null; payload?: { profile?: Record<string, unknown> } }
+      const importedId = body.agent_id || String(body.payload?.profile?.agent_id ?? 'imported-agent')
+      if (!store.agents.some(a => a.agent_id === importedId)) {
+        store.agents.push({ agent_id: importedId, loaded: false })
+      }
+      store.agentProfiles[importedId] = {
+        ...defaultProfile(importedId),
+        ...(body.payload?.profile ?? {}),
+      }
+      store.agentProfileVersions[importedId] = [{ revision: 1, created_at: nowIso(), changed_fields: ['import'], operator: 'system' }]
+      return json(route, profileResponse(importedId, store, 1))
     }
     const agentFilesMatch = path.match(/\/agents\/([^/]+)\/files$/)
     if (agentFilesMatch && method === 'GET') {
@@ -268,7 +435,12 @@ export async function installFakeBackend(
         created_at: nowIso(),
         loaded: true,
         skills_count: 0,
-        config: {},
+        config: store.agentProfiles[agentId] ?? {},
+        profile: {
+          display_name: (store.agentProfiles[agentId] as { display_name?: string } | undefined)?.display_name ?? agentId,
+          enabled: true,
+          revision: store.agentProfileVersions[agentId]?.at(-1)?.revision ?? 1,
+        },
       })
     }
     if (agentMatch && method === 'DELETE') {

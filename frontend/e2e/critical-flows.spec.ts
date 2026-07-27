@@ -206,8 +206,42 @@ test.describe('routing and agent workspace', () => {
 
     await page.goto('/agents/workspace-a')
     await expect(page).toHaveURL(/\/agents\/workspace-a$/)
-    await expect(page.getByRole('heading', { name: 'Agent workspace-a' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'workspace-a' })).toBeVisible()
     await expect(page.getByPlaceholder('搜索 Agent…')).toBeVisible()
+    await expect(page.getByRole('tab', { name: '配置' })).toBeVisible()
+  })
+})
+
+test.describe('agent configuration studio', () => {
+  test('配置页可验证并保存 Agent 配置', async ({ page }) => {
+    await page.goto('/agents/workspace-a')
+    await page.getByRole('tab', { name: '配置' }).click()
+    await expect(page.getByLabel('职责提示词')).toBeVisible()
+    await page.getByLabel('职责提示词').fill('E2E 测试职责提示词')
+    await page.getByRole('button', { name: '验证配置' }).click()
+    await expect(page.getByText('验证通过，可保存配置')).toBeVisible()
+    await page.getByRole('button', { name: '保存并应用' }).click()
+    await expect(page.getByText('配置已保存并应用')).toBeVisible()
+  })
+
+  test('版本页可预览差异', async ({ page }) => {
+    await page.goto('/agents/default')
+    await page.getByRole('tab', { name: '版本' }).click()
+    await page.getByRole('button', { name: '差异' }).first().click()
+    await expect(page.getByText(/与当前差异/)).toBeVisible()
+  })
+
+  test('创建向导可仅填 ID 创建 Agent', async ({ page }) => {
+    await page.goto('/agents/default')
+    await page.getByRole('button', { name: '新建', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '创建 Agent' })).toBeVisible()
+    await page.getByLabel('Agent ID').fill('e2e-studio-agent')
+    await page.getByRole('button', { name: '下一步' }).click()
+    await page.getByRole('button', { name: '下一步' }).click()
+    await page.getByRole('button', { name: '下一步' }).click()
+    await page.getByRole('button', { name: '下一步' }).click()
+    await page.getByRole('button', { name: '创建 Agent' }).click()
+    await expect(page.getByRole('heading', { name: 'e2e-studio-agent' })).toBeVisible()
   })
 })
 
