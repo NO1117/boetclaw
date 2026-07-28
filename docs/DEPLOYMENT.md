@@ -1,6 +1,6 @@
 # 部署说明
 
-> 文档基线：2026-07-17。
+> 文档基线：2026-07-28。
 
 本文按当前 `scripts/`、`Dockerfile`、`docker-compose.yml`、`deploy/nginx.conf` 和
 `backend/app/main.py` 描述部署行为。后端安装脚本明确接受 Python 3.11–3.13，
@@ -142,7 +142,7 @@ Compose 将以下宿主目录绑定到 backend 容器：
 ./backend/plugins_ext -> /app/plugins_ext
 ```
 
-workspace 包含任务、Agent、审批历史、消息历史、访问控制、trace、生成产物，以及默认位于
+workspace 包含任务队列 SQLite（`tasks/task_queue.sqlite3` + WAL）、旧任务 JSON（`tasks/task_history.json`）、Agent、审批历史、消息历史、访问控制、trace、生成产物，以及默认位于
 `workspace/checkpoints/` 的每 Agent 独立 SQLite checkpoint。
 必须持久化 `/app/workspace` 才能跨容器重建保留这些数据。技能和插件目录也被绑定挂载，
 它们是可执行内容，应限制写权限和变更来源。
@@ -162,7 +162,7 @@ CHECKPOINT_SQLITE_PATH=./workspace/checkpoints
 
 如果把 `WORKSPACE_DIR` 或 `CHECKPOINT_SQLITE_PATH` 改到其他容器路径，必须同步修改 volume 目标；否则应用会把数据写入
 未持久化的容器层。备份时应把 workspace 当作敏感数据，并验证恢复，而不是只确认备份文件存在。
-备份 SQLite 时应停机或使用 SQLite 一致性备份方式，升级前先备份全部 checkpoint 数据库；官方
+备份 SQLite 时应停机或使用 SQLite 一致性备份方式（含任务队列 WAL：备份主库文件并复制 `-wal`/`-shm`，或使用 `backup API`）；升级前先备份全部 checkpoint 与任务队列数据库；官方
 `setup()` 只执行向前 schema 初始化，本项目不会在 Agent reload、idle eviction 或删除注册项时隐式清理 checkpoint。
 
 ## 可选 Ollama
@@ -203,23 +203,32 @@ OPENAI_BASE_URL=http://<可从后端访问的主机>:8001/v1
 CORS_ORIGINS=https://console.example.com
 API_TOKEN=<随机长令牌>
 API_RATE_LIMIT_PER_MINUTE=<正整数>
-CONSOLE_PASSWORD=<强密码>
+CONSOLE_PASSWORD=<强密码，迁移期兼容；团队启用后建议移除>
 CONSOLE_JWT_SECRET=<独立随机长密钥>
 CONSOLE_JWT_TTL_MINUTES=60
+CONSOLE_COOKIE_SECURE=true
+BOOTSTRAP_TOKEN=<可选，非本机 bootstrap 时必填>
+# IDENTITY_SQLITE_PATH 默认 workspace/identity/identity.sqlite3（需持久化卷）
 TOOL_GUARD_ENABLED=true
 TOOL_GUARD_LEVEL=smart
 CHECKPOINT_BACKEND=sqlite
 CHECKPOINT_SQLITE_PATH=/app/workspace/checkpoints
 GATEWAY_RATE_LIMIT_PER_MINUTE=<正整数>
 ENABLED_PLUGINS=
+# 控制台经保险箱保存 Provider API Key 时必需（32 字节随机值，Base64/hex；勿提交真实值）
+BOETCLAW_MASTER_KEY=
 ```
+
+若使用控制台保存 Provider API Key（而非仅依赖 `OPENAI_API_KEY` 等环境变量），必须在部署环境中设置
+`BOETCLAW_MASTER_KEY` 并持久化 `workspace/credentials/`。生成方式与威胁边界见 `docs/SECURITY.md`。
 
 还应：
 
 - 只暴露必要端口和路径，对 `/docs`、`/openapi.json`、管理 API、`/ui/` 增加边界访问控制。
-- 使用 HTTPS；当前 Console Cookie 未设置 `Secure`，应在上线前补强并验证。
+- 使用 HTTPS；生产设置 `CONSOLE_COOKIE_SECURE=true`，并持久化 `workspace/identity/`（用户/会话/ACL/审计库）。
 - 为启用渠道设置非空用户白名单，并在代理或应用层补齐平台 webhook 签名校验。
-- 使用 secrets manager 或受控挂载提供密钥，不把真实 `backend/.env` 烘焙进镜像或提交仓库。
+- 使用 secrets manager 或受控挂载提供密钥（含 `BOETCLAW_MASTER_KEY` 与 Provider API Key），
+  不把真实 `backend/.env` 烘焙进镜像或提交仓库。
 - 仅启用审查过的插件/技能；当前插件与后端同进程执行，没有沙箱。
 - 以非 root、最小文件系统权限和受限出站网络运行。当前 Dockerfile 没有声明 `USER`，
   默认容器用户不是最小权限配置。

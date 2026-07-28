@@ -1,6 +1,6 @@
 # 测试说明
 
-> 文档基线：2026-07-20。
+> 文档基线：2026-07-28。
 
 ## 当前基线
 
@@ -11,8 +11,8 @@
 - PLAN-710 专项：`tests/test_phase14_sessions.py` 4 passed；全量基线按 collect-only `213`。
 - PLAN-210 状态为已完成：任务、同步/SSE、渠道 Agent 子任务、`/stop` 和运行取消 API 已纳入单进程执行级取消；边界是不支持跨进程、多副本或服务重启后的活动运行取消。
 - 前端已配置 Vitest/jsdom/Testing Library、V8 覆盖率报告和关键协议模块门槛。
-- 前端现有 5 个测试文件、29 项组件/协议测试（含会话归档契约）。
-- 浏览器 E2E（PLAN-410）已建立并复验：默认 Chromium + fake Provider 门禁（2026-07-20 `npm run test:e2e` 8 passed）；真实 Provider/渠道为 optional manual 套件。项目级 CI（PLAN-420）已落地：`.github/workflows/ci.yml` + `scripts/ci-local.*`；**Git 已初始化，推送到 GitHub 后启用 Actions / required checks**。Vitest 排除 `e2e/**`，`npm test` 仅跑组件/协议单测。
+- 前端含团队权限/登录门禁相关 Vitest（`TeamPermissionsPage`、`authPermissions` 等）；E2E 含 `team identity rbac` 流程。
+- 浏览器 E2E（PLAN-410）默认 Chromium + fake Provider 门禁；真实 Provider/渠道为 optional manual 套件。项目级 CI（PLAN-420）已落地：`.github/workflows/ci.yml` + `scripts/ci-local.*`。Vitest 排除 `e2e/**`，`npm test` 仅跑组件/协议单测。
 
 以上数字是当前快照，不应理解为长期固定指标。
 
@@ -38,7 +38,8 @@
 | `test_phase3_security.py` | 14 | ToolGuard guardian、策略级别、中间件、审批持久化 |
 | `test_phase4_skills.py` | 7 | skill frontmatter、静态扫描、技能池和治理路由 |
 | `test_phase5_agents.py` | 4 | 路由优先级、多 Agent 隔离、并发懒加载 |
-| `test_phase6_providers.py` | 12 | provider 管理、模型配置、能力缓存、provider 限流 |
+| `test_phase6_providers.py` | 13 | provider 管理、模型配置、能力缓存、provider 限流、配置路由不写明文 `.env` |
+| `test_provider_credential_vault.py` | 14 | 保险箱加解密/篡改/轮换、无主密钥降级、连接 CRUD/409、env 导入不删 `.env`、日志脱敏、validate-only |
 | `test_phase7_memory.py` | 7 | 记忆来源策略、存储后端、上下文摘要 |
 | `test_phase8_channels.py` | 9 | 四渠道解析、渲染、队列满和消费者 |
 | `test_phase9_scheduler.py` | 7 | cron/heartbeat、来源隔离、失败历史 |
@@ -47,7 +48,8 @@
 | `test_phase10_plugins.py` | 14 | 插件启用边界、命令/i18n、插件治理路由 |
 | `test_plan620_webhook_signature.py` | 11 | 四渠道路由验签、`skipped`/`verified`、中间件豁免 |
 | `test_plan630_plugin_scan_delete.py` | 6 | 安装扫描门禁、scan-report、DELETE 清理、路径穿越 |
-| `test_plan640_agent_disk_purge.py` | 7 | 磁盘冷启动列表、tombstone 隐藏、purge 清盘/checkpoint、default 拒绝、resume 409 |
+| `test_attachment_production.py` | 8 | 两阶段上传、Agent 隔离、解析/重试/删除、attachment_ids 聊天、会话引用清理 |
+| `test_chat_attachments.py` | 11 | 内联 Base64 兼容、vision 校验、模型 override |
 | `test_phase12_observability.py` | 6 | trace、timeline、OTel、Prometheus 文本 |
 | `test_phase14_sessions.py` | 4 | 会话记录、列表、导出、删除、归档过滤与 API |
 | `test_phase15_gateway_ops.py` | 3 | 渠道状态、消息历史/重试、网关限流 |
@@ -59,7 +61,9 @@
 | `test_phase17_agent_index.py` | 1 | Agent 文件索引和历史 |
 | `test_phase17_artifact_meta.py` | 1 | 生成代码 sidecar 元数据 |
 | `test_phase23_api_security.py` | 5 | API Token、健康检查豁免、API 限流、Console JWT |
-| `test_phase24_task_persistence.py` | 2 | 任务持久化、重启后运行中任务恢复为失败 |
+| `test_team_identity_rbac.py` | 11 | Argon2id、角色矩阵、bootstrap、锁定、会话撤销、CSRF、兼容登录、最后 owner 事务、admin 边界、ACL IDOR |
+| `test_phase24_task_persistence.py` | 2 | 任务 SQLite 持久化、重启后 running → interrupted |
+| `test_durable_task_queue.py` | 11 | 迁移幂等、租约、并发、重试分类、dead-letter、分页、脱敏、竞态 |
 | `test_phase25_gateway_access_control.py` | 4 | 渠道白名单持久化、允许/拒绝、用户限流 |
 | `test_plan100_execution_ref.py` | 10 | ExecutionRef、Interrupt 解析、错误 ref、审批顺序、适配器校验失败审计、旧 JSON、fail-closed、恢复语义隔离 |
 | `test_plan110_checkpoint.py` | 11 | SQLite provider/Agent 重建恢复、每 Agent DB 隔离、memory 降级、生命周期、interrupt 校验与审批重启策略 |
@@ -83,6 +87,8 @@ Windows PowerShell：
 cd backend
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m pytest tests\test_phase3_security.py
+.\.venv\Scripts\python.exe -m pytest tests\test_provider_credential_vault.py
+.\.venv\Scripts\python.exe -m pytest tests\test_phase6_providers.py -k "persist_api_key or config_routes"
 .\.venv\Scripts\python.exe -m pytest -k "gateway"
 .\.venv\Scripts\python.exe -m pytest --collect-only
 ```
@@ -93,9 +99,44 @@ Linux/macOS：
 cd backend
 .venv/bin/python -m pytest
 .venv/bin/python -m pytest tests/test_phase3_security.py
+.venv/bin/python -m pytest tests/test_provider_credential_vault.py
+.venv/bin/python -m pytest tests/test_phase6_providers.py -k "persist_api_key or config_routes"
 .venv/bin/python -m pytest -k gateway
 .venv/bin/python -m pytest --collect-only
 ```
+
+Provider 凭据保险箱与连接管理（专项，需 `conftest.py` 注入临时 `BOETCLAW_MASTER_KEY`）：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests\test_provider_credential_vault.py -v
+.\.venv\Scripts\python.exe -m pytest tests\test_phase6_providers.py::test_provider_config_routes_do_not_persist_api_key_to_env -v
+```
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_provider_credential_vault.py -v
+.venv/bin/python -m pytest tests/test_phase6_providers.py::test_provider_config_routes_do_not_persist_api_key_to_env -v
+```
+
+**覆盖要点**（`test_provider_credential_vault.py`）：
+
+- 加解密往返、密文篡改检测、主密钥轮换后仍可解密
+- 未配置主密钥时 vault 写入禁用（503），环境变量 Provider 仍 `is_configured`
+- 连接创建/列表不泄漏 `api_key`；revision 冲突与默认连接引用删除保护（409）
+- `import-env` 不修改 `.env` 且 `env_cleanup_required`
+- Provider 配置 PUT 不写明文到 `.env`；`validate_only` 不落盘
+- `redact_text` / `emit_event` 不包含完整密钥
+
+前端 Provider 连接（Vitest，`ProviderSettings.test.tsx`）：
+
+```bash
+cd frontend
+npm test -- --run ProviderSettings
+```
+
+- 列表/编辑不回填 API Key；创建后清空密钥字段
+- 保险箱未配置提示；导入 env 响应；连接检测与保存错误展示
 
 前端测试与生产构建：
 
@@ -203,6 +244,7 @@ PYTHONPATH=. python scripts/export_openapi.py
 - 插件动态导入未在 OS/容器沙箱中测试。
 - 消息历史重启后不保留 `_message` 对象，因此持久化记录的重试能力未覆盖为可用能力。
 - 外部 provider、MCP、OTel exporter 的故障注入和长时间稳定性测试有限。
+- 保险箱默认 E2E 使用 fake backend 路由，不验证真实 AES 磁盘文件；真实主密钥 + vault 文件权限需在部署验收中手工确认。
 
 ## 建议验收用例
 

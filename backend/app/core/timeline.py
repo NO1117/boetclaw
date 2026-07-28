@@ -28,6 +28,12 @@ _CATEGORY_MAP: dict[EventType, str] = {
     EventType.SKILL_LOADED: "skill",
     EventType.MEMORY_PERSIST: "memory",
     EventType.MEMORY_SKIP: "memory",
+    EventType.MEMORY_CREATED: "memory",
+    EventType.MEMORY_CANDIDATE: "memory",
+    EventType.MEMORY_APPROVED: "memory",
+    EventType.MEMORY_REJECTED: "memory",
+    EventType.MEMORY_RETRIEVED: "memory",
+    EventType.MEMORY_DELETED: "memory",
     EventType.MCP_RECOVER: "system",
     EventType.PROVIDER_RETRY: "system",
 }

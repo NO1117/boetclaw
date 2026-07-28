@@ -16,10 +16,10 @@ def get_store() -> Any | None:
     """Return a langgraph Store for cross-thread long-term memory.
 
     Only instantiated when memory_backend == 'store'. Returns None otherwise so
-    callers fall back to file-based memory (AGENTS.md) or no memory.
+    callers fall back to file-based memory (AGENTS.md) or SQLite user memory.
     """
     global _store
-    if settings.memory_backend != "store":
+    if settings.memory_backend not in {"store"}:
         return None
     if _store is None:
         try:
@@ -35,8 +35,9 @@ def get_store() -> Any | None:
 
 def get_memory_files() -> list[str] | None:
     """File-based memory sources for create_deep_agent(memory=...)."""
-    if settings.memory_backend == "none":
+    if settings.memory_backend in {"none", "sqlite"}:
         return None
-    if settings.agents_md.exists():
-        return [str(settings.agents_md)]
+    if settings.memory_backend == "file" or settings.agents_md.exists():
+        if settings.agents_md.exists():
+            return [str(settings.agents_md)]
     return None

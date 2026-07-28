@@ -6,25 +6,35 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.providers.capabilities import EnrichedModelInfo, ModelCapabilities, enrich_model
+
 
 @dataclass
 class ModelInfo:
     name: str
     provider: str
     context_window: int = 0
-    supports_tools: bool = True
-    supports_vision: bool = False
+    max_output_tokens: int | None = None
+    supports_tools: bool | None = None
+    supports_vision: bool | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def enriched(self) -> EnrichedModelInfo:
+        caps = ModelCapabilities(
+            vision=self.supports_vision,
+            tools=self.supports_tools if self.supports_tools is not None else None,
+        )
+        return enrich_model(
+            name=self.name,
+            provider=self.provider,
+            context_window=self.context_window or None,
+            max_output_tokens=self.max_output_tokens,
+            capabilities=caps,
+            metadata=self.metadata,
+        )
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "provider": self.provider,
-            "context_window": self.context_window,
-            "supports_tools": self.supports_tools,
-            "supports_vision": self.supports_vision,
-            "metadata": self.metadata,
-        }
+        return self.enriched().to_dict()
 
 
 @dataclass
@@ -77,3 +87,6 @@ class Provider(ABC):
             default_model=self.default_model,
             requires_api_key=self.requires_api_key,
         )
+
+    def list_enriched_models(self) -> list[EnrichedModelInfo]:
+        return [m.enriched() for m in self.list_models()]

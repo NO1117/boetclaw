@@ -56,12 +56,12 @@
 | FUN-061 | 规则/文件/Shell Guardian | REQ-160、REQ-302 | Security | `security/guardians/` | 已实现 | 基于规则和参数检查，存在绕过风险 |
 | FUN-062 | 工具人工审批 | REQ-161 | Middleware/Security/API | `tool_guard_mw.py`；`security/approval.py`；`services/approval_resume.py` | 已实现（单实例） | 稳定 key、真实 interrupt/resume、并发互斥和拒绝零执行已测；跨资源崩溃窗口不保证 exactly-once |
 | FUN-063 | 审批历史持久化和重启恢复 | REQ-162 | Security/Checkpoint | `security/approval.py`；`core/checkpoint.py`；`services/execution_resume.py` | 已实现 | SQLite 保留 pending 并校验 checkpoint；处理中重启和恢复失败进入不可自动重试终态；memory 重启显式过期 |
-| FUN-064 | API Token/JWT 鉴权 | REQ-163、REQ-164 | Middleware/Auth | `api_security_mw.py`；`security/console_auth.py` | 已实现 | `/auth/*` 全部豁免中间件；适用于本地单用户而非 RBAC |
+| FUN-064 | API Token/JWT 鉴权 | REQ-163、REQ-164 | Middleware/Auth | `api_security_mw.py`；`security/console_auth.py`；`identity/` | 已实现 | `/auth/*` 豁免；团队会话 + legacy API Token/CONSOLE_PASSWORD 兼容 |
 | FUN-065 | API token/IP 限流 | REQ-163 | Middleware | `api_security_mw.py` | 已实现 | 单进程内存计数，多实例不共享 |
-| FUN-066 | Console 登录/退出 | REQ-164 | Auth/前端 | `api/routes/auth.py`；`App.tsx` | 已实现 | Token 同时进入 localStorage，需防范 XSS；无账户锁定 |
+| FUN-066 | Console 登录/退出 | REQ-164 | Auth/前端 | `api/routes/auth.py`；`App.tsx`；`authClient.ts` | 已实现 | 用户名+密码、bootstrap、HttpOnly Cookie+CSRF；兼容仅密码；账号/IP 锁定 |
 | FUN-067 | 渠道白名单 | REQ-165 | Gateway/Security | `gateway/access_control.py` | 已实现 | 空白名单默认开放 |
 | FUN-068 | 渠道用户级限流 | REQ-165 | Gateway | `gateway/manager.py` | 已实现 | 单进程内存窗口 |
-| FUN-069 | 多用户 RBAC | REQ-167、REQ-020 | Identity | — | 待实现 | 无用户、角色、租户、资源授权模型 |
+| FUN-069 | 多用户 RBAC | REQ-167、REQ-020 | Identity | `identity/`；`users.py`；`TeamPermissionsPage`；`ResourceAccessPanel` | 已实现（单工作区） | 固定系统角色 + Agent/KB ACL + 审计；无租户/SSO/自定义角色 |
 
 ## 5. 任务、调度与渠道
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.providers.base import ModelInfo, Provider
+from app.providers.connections.runtime import get_runtime_config
 
 
 class OpenAIProvider(Provider):
@@ -21,23 +22,37 @@ class OpenAIProvider(Provider):
         ("o1", 200000, False),
     ]
 
+    def _model_info(self, name: str, cw: int, vision: bool) -> ModelInfo:
+        return ModelInfo(
+            name=name,
+            provider=self.name,
+            context_window=cw,
+            supports_vision=vision,
+            supports_tools=True,
+        )
+
+    def _credentials(self) -> tuple[str, str]:
+        runtime = get_runtime_config()
+        if runtime and runtime.provider_type == self.name:
+            return runtime.api_key, runtime.base_url
+        return settings.openai_api_key, settings.openai_base_url
+
     def is_configured(self) -> bool:
-        return bool(settings.openai_api_key or settings.openai_base_url)
+        api_key, base_url = self._credentials()
+        return bool(api_key or base_url)
 
     def get_chat_model(self, model: str, **kwargs: Any) -> Any:
         from langchain_openai import ChatOpenAI
 
+        api_key, base_url = self._credentials()
         init_kwargs: dict[str, Any] = {
             "model": model,
-            "api_key": settings.openai_api_key or ("not-needed" if settings.openai_base_url else None),
+            "api_key": api_key or ("not-needed" if base_url else None),
             **kwargs,
         }
-        if settings.openai_base_url:
-            init_kwargs["base_url"] = settings.openai_base_url
+        if base_url:
+            init_kwargs["base_url"] = base_url
         return ChatOpenAI(**init_kwargs)
 
     def list_models(self) -> list[ModelInfo]:
-        return [
-            ModelInfo(name=m, provider=self.name, context_window=cw, supports_vision=v)
-            for m, cw, v in self._MODELS
-        ]
+        return [self._model_info(m, cw, v) for m, cw, v in self._MODELS]

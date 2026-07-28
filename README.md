@@ -157,9 +157,12 @@ ENABLED_PLUGINS=
 
 OTEL_ENABLED=true
 TRACE_PERSIST_ENABLED=true
+
+# 控制台经保险箱保存 Provider API Key 时需要（32 字节随机 Base64；勿提交真实值）
+BOETCLAW_MASTER_KEY=
 ```
 
-完整配置见 `backend/.env.example`。
+完整配置见 `backend/.env.example`；保险箱与主密钥说明见 `docs/SECURITY.md`。
 
 ## 常用 API
 

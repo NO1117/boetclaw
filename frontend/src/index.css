@@ -7,25 +7,59 @@
 }
 
 :root {
+  /* Surfaces — Figma tokens */
   --bg-primary: #0a0e17;
+  --bg-sidebar: #060a11;
+  --bg-topbar: #0e131c;
   --bg-secondary: #111827;
+  --bg-panel: #111823;
   --bg-tertiary: #1a2332;
   --bg-hover: #243044;
+  --bg-nav-active: #173057;
+  --bg-approval: #1f1a0f;
+  --bg-danger-soft: #1f1113;
+  --bg-success-soft: #0b241f;
+  --bg-error-soft: #2e1214;
+
   --border: #2a3548;
   --text-primary: #e8edf5;
-  --text-secondary: #8b95a8;
+  --text-secondary: #8c96a8;
   --text-muted: #5a6478;
+
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-glow: rgba(59, 130, 246, 0.15);
   --success: #10b981;
   --warning: #f59e0b;
   --error: #ef4444;
+  --error-bright: #f04545;
+  --danger: #ef4444;
   --info: #06b6d4;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
   --radius: 10px;
-  --radius-sm: 6px;
-  --font: 'Inter', -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --radius-lg: 12px;
+  --radius-pill: 16px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --sidebar-width: 224px;
+  --sidebar-collapsed: 72px;
+  --topbar-height: 72px;
+
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.28);
+
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --focus-ring: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent);
 }
 
 html, body, #root {
@@ -38,6 +72,7 @@ html, body, #root {
 
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -54,11 +89,23 @@ button {
   outline: none;
 }
 
-input, textarea {
+input, textarea, select {
   font-family: var(--font);
   outline: none;
 }
 
 code, pre {
   font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+select:focus:not(:focus-visible) {
+  box-shadow: none;
 }

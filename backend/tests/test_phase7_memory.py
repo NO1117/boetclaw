@@ -21,8 +21,9 @@ def test_store_backend_disabled_by_default(monkeypatch):
     from app.core.config import settings
     from app.memory import store_backend
 
-    monkeypatch.setattr(settings, "memory_backend", "file", raising=False)
+    monkeypatch.setattr(settings, "memory_backend", "none", raising=False)
     assert store_backend.get_store() is None
+    assert store_backend.get_memory_files() is None
 
 
 def test_store_backend_store_mode(monkeypatch):

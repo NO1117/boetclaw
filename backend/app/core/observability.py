@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from app.core.config import settings
+from app.credentials.redaction import redact_text, redact_value
 
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
 run_id_var: ContextVar[str] = ContextVar("run_id", default="")
@@ -46,6 +47,13 @@ class EventType(str, Enum):
     PROVIDER_RETRY = "provider_retry"
     MEMORY_PERSIST = "memory_persist"
     MEMORY_SKIP = "memory_skip"
+    MEMORY_CREATED = "memory_created"
+    MEMORY_CANDIDATE = "memory_candidate"
+    MEMORY_APPROVED = "memory_approved"
+    MEMORY_REJECTED = "memory_rejected"
+    MEMORY_RETRIEVED = "memory_retrieved"
+    MEMORY_DELETED = "memory_deleted"
+    VOICE_STAGE = "voice_stage"
 
 
 @dataclass
@@ -178,20 +186,22 @@ def emit_event(
     trace_id: str | None = None,
     run_id: str | None = None,
 ) -> TraceEvent:
+    safe_data = redact_value(data or {})
     event = TraceEvent(
         id=uuid.uuid4().hex[:12],
         trace_id=trace_id or trace_id_var.get() or new_trace_id(),
         run_id=run_id or run_id_var.get() or new_run_id(),
         event_type=event_type,
         timestamp=datetime.now(timezone.utc).isoformat(),
-        data=data or {},
+        data=safe_data if isinstance(safe_data, dict) else {},
     )
     trace_store.add(event)
+    log_kwargs = {k: redact_text(str(v)) if isinstance(v, str) else v for k, v in (safe_data if isinstance(safe_data, dict) else {}).items()}
     get_logger().info(
         event_type.value,
         trace_id=event.trace_id,
         run_id=event.run_id,
-        **(data or {}),
+        **log_kwargs,
     )
     return event
 

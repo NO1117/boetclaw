@@ -28,6 +28,8 @@ async def invoke_agent(
     run_id: str | None = None,
     task_id: str = "",
     well_id: str = "",
+    user_content: str | list[Any] | None = None,
+    model_string: str | None = None,
 ) -> dict[str, Any]:
     from app.memory.context_policy import normalize_source, should_persist_memory
 
@@ -41,6 +43,17 @@ async def invoke_agent(
         thread_id=thread_id,
         well_id=well_id,
     )
+
+    snapshot_token = None
+    try:
+        from app.agents.profile.models import EffectiveAgentConfig
+        from app.agents.profile.service import profile_service
+        from app.agents.profile.snapshot import reset_run_snapshot, set_run_snapshot
+
+        effective = profile_service.effective_for_agent(agent_id)
+        snapshot_token = set_run_snapshot(EffectiveAgentConfig.model_validate(effective).model_dump())
+    except Exception:  # noqa: BLE001
+        snapshot_token = None
 
     try:
         source = normalize_source(source)
@@ -64,14 +77,50 @@ async def invoke_agent(
         )
 
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": clean_msg}]}
+        content = user_content if user_content is not None else clean_msg
+        if plan_mode:
+            content = clean_msg
+        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": content}]}
         if plan_mode:
             state_in["plan_phase"] = "planning"
 
-        result = await agent.ainvoke(state_in, config=config)
+        invoke_agent = agent
+        graph_cache_hit: bool | None = None
+        graph_cache_build_ms: float | None = None
+        effective_provider: str | None = None
+        effective_model: str | None = None
+        if model_string:
+            from app.agents.resolver import build_agent_graph_with_model
+            from app.providers.manager import provider_manager
+
+            effective_provider, effective_model = provider_manager.parse_model_string(model_string)
+            invoke_agent, graph_cache_hit, graph_cache_build_ms = await build_agent_graph_with_model(
+                agent_id, model_string
+            )
+            config = {
+                **config,
+                "configurable": {
+                    **config.get("configurable", {}),
+                    "model_string": model_string,
+                },
+            }
+
+        from app.services.run_metrics import run_metrics_tracker
+
+        run_metrics_tracker.start(
+            trace_id=tid,
+            run_id=rid,
+            agent_id=agent_id,
+            provider=effective_provider,
+            model=effective_model,
+            graph_cache_hit=graph_cache_hit,
+            graph_cache_build_ms=graph_cache_build_ms,
+        )
+
+        result = await invoke_agent.ainvoke(state_in, config=config)
 
         finalized = _finalize_agent_result(
-            agent,
+            invoke_agent,
             result,
             agent_id=agent_id,
             thread_id=thread_id,
@@ -87,6 +136,18 @@ async def invoke_agent(
                 trace_id=tid,
                 run_id=rid,
             )
+
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        from app.services.run_metrics import extract_usage_from_messages, run_metrics_tracker
+
+        usage = extract_usage_from_messages(messages)
+        metrics = run_metrics_tracker.complete(
+            tid,
+            usage=usage,
+            provider=effective_provider,
+            model=effective_model,
+            status="completed" if not interrupted else "interrupted",
+        )
 
         emit_event(
             EventType.AGENT_END,
@@ -107,8 +168,13 @@ async def invoke_agent(
             "execution_ref": finalized["execution_ref"],
             "payload": finalized["payload"],
             "source": source,
+            "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
+        if snapshot_token is not None:
+            from app.agents.profile.snapshot import reset_run_snapshot
+
+            reset_run_snapshot(snapshot_token)
         reset_run_context(context_tokens)
 
 
@@ -221,6 +287,10 @@ async def stream_agent(
     source: str = "user",
     trace_id: str | None = None,
     run_id: str | None = None,
+    user_content: str | list[Any] | None = None,
+    model_string: str | None = None,
+    attachment_count: int = 0,
+    retrieval_hits: int = 0,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream one Agent run and finish with the same result contract as invoke_agent."""
     from app.memory.context_policy import normalize_source, should_persist_memory
@@ -233,6 +303,16 @@ async def stream_agent(
         agent_id=agent_id,
         thread_id=thread_id,
     )
+    snapshot_token = None
+    try:
+        from app.agents.profile.models import EffectiveAgentConfig
+        from app.agents.profile.service import profile_service
+        from app.agents.profile.snapshot import set_run_snapshot
+
+        effective = profile_service.effective_for_agent(agent_id)
+        snapshot_token = set_run_snapshot(EffectiveAgentConfig.model_validate(effective).model_dump())
+    except Exception:  # noqa: BLE001
+        snapshot_token = None
     source = normalize_source(source)
     persist_memory = should_persist_memory(source)
     plan_mode = message.strip().startswith("/plan")
@@ -254,12 +334,51 @@ async def stream_agent(
             trace_id=tid,
             run_id=rid,
         )
-        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": clean_msg}]}
+        content = user_content if user_content is not None else clean_msg
+        if plan_mode:
+            content = clean_msg
+        state_in: dict[str, Any] = {"messages": [{"role": "user", "content": content}]}
         if plan_mode:
             state_in["plan_phase"] = "planning"
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
-        async for raw_event in agent.astream(
+        stream_agent = agent
+        graph_cache_hit: bool | None = None
+        graph_cache_build_ms: float | None = None
+        effective_provider: str | None = None
+        effective_model: str | None = None
+        if model_string:
+            from app.agents.resolver import build_agent_graph_with_model
+            from app.providers.manager import provider_manager
+
+            effective_provider, effective_model = provider_manager.parse_model_string(model_string)
+            stream_agent, graph_cache_hit, graph_cache_build_ms = await build_agent_graph_with_model(
+                agent_id, model_string
+            )
+            config = {
+                **config,
+                "configurable": {
+                    **config.get("configurable", {}),
+                    "model_string": model_string,
+                },
+            }
+
+        from app.services.run_metrics import run_metrics_tracker
+
+        run_metrics_tracker.start(
+            trace_id=tid,
+            run_id=rid,
+            agent_id=agent_id,
+            provider=effective_provider,
+            model=effective_model,
+            attachment_count=attachment_count,
+            retrieval_hits=retrieval_hits,
+            graph_cache_hit=graph_cache_hit,
+            graph_cache_build_ms=graph_cache_build_ms,
+        )
+        first_token_recorded = False
+
+        async for raw_event in stream_agent.astream(
             state_in,
             config=config,
             stream_mode=["messages", "updates"],
@@ -277,6 +396,9 @@ async def stream_agent(
                 chunk = _stream_message(data)
                 chunk_content = getattr(chunk, "content", "")
                 if isinstance(chunk_content, str) and chunk_content:
+                    if not first_token_recorded:
+                        run_metrics_tracker.record_first_token(tid)
+                        first_token_recorded = True
                     content_parts.append(chunk_content)
             elif mode == "updates":
                 _merge_stream_update(result, data)
@@ -291,7 +413,7 @@ async def stream_agent(
             }
 
         finalized = _finalize_agent_result(
-            agent,
+            stream_agent,
             result,
             agent_id=agent_id,
             thread_id=thread_id,
@@ -304,6 +426,19 @@ async def stream_agent(
                 trace_id=tid,
                 run_id=rid,
             )
+
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        from app.services.run_metrics import extract_usage_from_messages
+
+        usage = extract_usage_from_messages(messages)
+        metrics = run_metrics_tracker.complete(
+            tid,
+            usage=usage,
+            provider=effective_provider,
+            model=effective_model,
+            status="completed" if not finalized["interrupted"] else "interrupted",
+        )
+
         emit_event(
             EventType.AGENT_END,
             {"thread_id": thread_id, "agent_id": agent_id, "interrupted": finalized["interrupted"]},
@@ -316,8 +451,13 @@ async def stream_agent(
             "run_id": rid,
             **finalized,
             "source": source,
+            "run_metrics": metrics.to_dict() if metrics else None,
         }
     finally:
+        if snapshot_token is not None:
+            from app.agents.profile.snapshot import reset_run_snapshot
+
+            reset_run_snapshot(snapshot_token)
         reset_run_context(context_tokens)
 
 

@@ -46,6 +46,7 @@ LLM Provider / MCP / local filesystem / channel APIs
 | 业务服务 | 任务、Cron、Heartbeat、消息渠道 | `backend/app/services/` |
 | 钻井领域 | 井、井段、日报、参数、LAS | `backend/app/domain/` |
 | 安全 | Guardian、策略引擎、审批、Console JWT | `backend/app/security/` |
+| 团队身份 | 用户/会话/RBAC/资源 ACL/审计（单工作区） | `backend/app/identity/`；`api/routes/auth.py`、`users.py` |
 
 ## 3. 启动与关闭流程
 
@@ -100,6 +101,22 @@ lifespan 退出时取消并等待 Phase 2 任务，通过单进程 `RunRegistry`
 同步 `/agent/chat` 与 SSE `/agent/chat/stream` 均通过共享 `prepare_chat()` 和严格 resolver 路由到 default 或已注册 Workspace Agent；计划/审批 resume 使用相同解析规则，未知或已删除 Agent 不会静默创建或回退 default。
 
 `list_agents` / `GET /agents` 会扫描 `agents_root` 子目录（跳过 `.deleted` tombstone），保证 default 始终在册，并仅懒加载元数据而不强制 build graph。默认删除写 tombstone 并保留目录与 checkpoint（`checkpoint_retained=true`）；`purge=true` 时删除工作区目录，经 `CheckpointProvider.purge` 清理该 Agent checkpoint，并留下 `.purged/{id}` 标记。tombstone/purge 后列表不可见，resume 返回 409；default 不可删除/不可 purge。`evict_idle()` 已实现但没有看到生命周期定时调用。
+
+### 4.2.1 附件子系统（PLAN-800）
+
+```text
+前端上传 → POST /agents/{id}/attachments
+  → AttachmentService（签名校验、Agent 隔离目录、SHA-256）
+  → 进程内后台解析（pypdf / python-docx / openpyxl / python-pptx / 文本）
+  → 结构分块 + 本地关键词索引
+聊天发送 attachment_ids → prepare_chat → resolve_attachment_ids_for_chat
+  → 关键词检索相关块 → 注入 LangChain user content
+  → session 仅存 ID/摘要；Trace 记录块引用与截断
+```
+
+- 存储：`workspace/attachments/{agent_id}/{attachment_id}/`（`original.bin`、`meta.json`、`chunks.json`、`keyword_index.json`）。
+- 生命周期：`uploading/uploaded/parsing/ready/failed/expired/deleted`；删除写 tombstone；清理任务跳过仍被会话 `attachment_refs` 引用的附件。
+- 兼容：旧版 `ChatRequest.attachments[]` Base64 路径仍可用；默认前端走两阶段 `attachment_ids`。
 
 ### 4.3 模型、工具与子智能体
 
@@ -203,9 +220,11 @@ write_todos / 高风险工具
 
 该布局只面向单实例：每 Agent 独立 DB 是 Agent 隔离手段，不是多实例协调方案。审批 JSON、LangGraph SQLite 与工具写入的外部资源没有共同事务；进程在工具副作用完成后、graph/审批状态写回前崩溃时无法判定副作用结果。因此这里的“单次执行”是受测正常流程与单进程并发语义，不是跨资源或分布式 exactly-once。
 
-### 6.4 后台任务
+### 6.4 后台任务（持久化队列）
 
-任务创建或重跑后由单进程 `RunRegistry` 创建并持有 `asyncio.Task`，状态写入 JSON。取消接口先进入 `cancelling`，取消底层协程并等待确认；受限状态转换与 CAS 防止 `cancelled` 被迟到的完成/失败结果覆盖。重复取消幂等，已完成或失败返回冲突。该机制不跨进程、多副本或服务重启恢复活动协程。
+任务状态持久化在 SQLite WAL（`workspace/tasks/task_queue.sqlite3`），启动时幂等迁移旧 `task_history.json`。单实例 Worker 通过租约领取 `queued/scheduled/retry_wait` 任务；事务条件更新防止并发竞态。重启后未完成的 `running/leased/cancelling` 标记为 `interrupted`，不伪装继续运行。
+
+API `/run` 与渠道仍可通过 `RunRegistry` 直接触发协程（兼容路径）；Worker 路径使用冻结 Agent/连接快照。状态含 `queued/scheduled/leased/running/retry_wait/dead_letter/interrupted` 等；旧 `pending` 映射为 `queued`。
 
 ### 6.5 渠道消息
 
@@ -258,7 +277,8 @@ workspace/
 ├─ checkpoints/
 │  └─ agent-{agent_id摘要}.sqlite3    # 每 Agent 独立 LangGraph checkpoint
 ├─ sessions/{thread_id}.json         # 会话
-├─ tasks/task_history.json           # 后台任务
+├─ tasks/task_queue.sqlite3       # 持久化任务队列（WAL）
+├─ tasks/task_history.json        # 旧 JSON 历史（迁移源，不自动删除）
 ├─ plans/plan_history.json           # 计划审计
 ├─ security/approval_history.json    # 审批审计
 ├─ gateway/message_history.json      # 渠道消息，最近 500 条
@@ -298,15 +318,16 @@ Checkpoint SQLite schema 由官方 saver `setup()` 向前初始化。领域 `dom
 
 ### 9.1 HTTP API
 
-- `/api/v1` 在配置 `API_TOKEN` 或 `CONSOLE_PASSWORD` 后受保护。
-- 接受 Bearer API Token、`X-API-Token`、Console JWT Bearer/cookie。
+- `/api/v1` 在存在用户库、或配置 `API_TOKEN`/`CONSOLE_PASSWORD` 后受保护。
+- 接受 Bearer API Token、`X-API-Token`、Console 会话 JWT Bearer/cookie。
 - `/api/v1/monitor/health` 和 `/api/v1/auth/*` 豁免。
-- 限流按 token 摘要优先、IP 兜底，状态仅在当前进程。
+- 限流按 actor/token 摘要优先、IP 兜底，状态仅在当前进程。
 - CORS 来源由 `CORS_ORIGINS` 配置。
+- 资源授权失败统一 404（防枚举）；权限决策基于服务端 actor，不信任客户端 user ID。
 
-### 9.2 Console
+### 9.2 Console 与团队身份
 
-`CONSOLE_PASSWORD` 为空时保持开放；配置后登录签发短期 HMAC-SHA256 JWT。当前是单密码模型，无用户、RBAC、账户锁定或 MFA。
+无用户且未配置 `API_TOKEN`/`CONSOLE_PASSWORD` 时为开放模式。空用户库可通过本机或 `BOOTSTRAP_TOKEN` 创建首个 owner。用户密码 Argon2id；会话 JWT 含 `user_id/role/token_version/session_id`，SQLite WAL（`identity_sqlite_path`）持久化会话与授权。系统角色 `owner/admin/operator/viewer`；Agent/知识库支持 `private|workspace` 与 `viewer|editor|runner` ACL。Cookie 写请求校验 CSRF；`API_TOKEN`/`CONSOLE_PASSWORD` 保持兼容。无 MFA、无租户/SSO。
 
 ### 9.3 工具与文件
 
@@ -361,7 +382,7 @@ Compose 中 frontend 和 backend 是两个容器；backend 镜像自身仍包含
 4. **Workspace 生命周期**：磁盘列表发现与可选 purge 已闭环；idle eviction 未调度；`.purged` 标记仅用于 resume 语义，不恢复工作区内容。
 5. **存储可靠性**：DomainStore 已增强单实例原子写和备份，但 JSON/JSONL 仍不适合高并发和多实例；事务数据库与迁移仍属未来。
 6. **调度可靠性**：Cron history 已单机落盘；APScheduler 多副本仍会重复触发。
-7. **安全模型**：无多用户 RBAC；插件是进程内代码；ToolGuard 不是沙箱。
+7. **安全模型**：单实例单工作区多用户 RBAC 已落地；无租户/SSO/自定义角色；插件是进程内代码；ToolGuard 不是沙箱。
 8. **限流语义**：Provider 限流位于模型解析入口，不覆盖每次模型请求。
 9. **领域完整性**：关联 CRUD 和井依赖 409 已实现；无数据库外键、跨进程事务、批量操作和乐观并发版本。
 10. **国际化**：主要是中文 UI，zh/en 只覆盖命令和部分安全提示。

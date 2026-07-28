@@ -17,16 +17,17 @@
 
 ### 1.2 鉴权与限流
 
-- 当 `API_TOKEN` 和 `CONSOLE_PASSWORD` 都为空时，API 默认开放。
-- 配置后可使用 `Authorization: Bearer <API_TOKEN|Console JWT>`、`X-API-Token: <API_TOKEN>` 或 Console JWT cookie。
+- 无用户且 `API_TOKEN`/`CONSOLE_PASSWORD` 都为空时为开放模式。
+- 团队身份：`/auth/bootstrap`、`/auth/login`（用户名+密码，兼容仅密码）、`/auth/me`、会话撤销、`/users/*`、`/acl/*`、`/audit`。
+- 配置后可使用 `Authorization: Bearer <API_TOKEN|Session JWT>`、`X-API-Token` 或 HttpOnly Cookie；Cookie 写请求需 `X-CSRF-Token`。
 - `/api/v1/auth/*`、`/api/v1/monitor/health` 与 `/api/v1/gateway/*/webhook` 豁免中间件鉴权和限流。
 - 其余 `/api/v1/*` 进入 `ApiSecurityMiddleware`。渠道 webhook 改由各平台 `verify_signature` 鉴权（见 CHANNELS/SECURITY）；未配置平台密钥时放行并返回 `signature=skipped`。
-- `API_RATE_LIMIT_PER_MINUTE>0` 时，按 token 摘要优先、客户端 IP 兜底限流；超限返回 429（webhook 路径已豁免）。
-- Pydantic 校验失败通常返回 422；路由按业务返回 400/401/404/409/429/500/503。
+- `API_RATE_LIMIT_PER_MINUTE>0` 时，按 actor/token 摘要优先、客户端 IP 兜底限流；超限返回 429（webhook 路径已豁免）。
+- Pydantic 校验失败通常返回 422；路由按业务返回 400/401/403/404/409/429/500/503。
 
 ### 1.3 常用模型
 
-- `ChatRequest`：`message`（必填）、`thread_id?`、`agent_id?`、`source=user`、`lang?`。
+- `ChatRequest`：`message`、`thread_id?`、`agent_id?`、`source=user`、`lang?`；`attachments[]`（内联 Base64，兼容旧客户端）或 `attachment_ids[]`（推荐，两阶段上传）；二者不可同时使用。纯附件消息允许 `message=""`。
 - `ExecutionRef`：不可变的 `agent_id`、`thread_id`、显式 `checkpoint_ns`、`interrupt_id`、`interrupt_type`；根图 namespace 为 `""`。
 - `ChatResponse`：`thread_id`、`trace_id`、`run_id`、`response`、`todos[]`、`message_count`、`interrupted`、`agent_id`，中断时额外返回 `execution_ref` 与 `payload`。
 - `TaskCreateRequest`：`title`、`prompt`、`auto_run=true`、`gateway`、`gateway_user`、`metadata`。
@@ -64,25 +65,56 @@
 - 计划恢复与工具审批使用不同服务；二者只共享底层 graph resume adapter，interrupt type 不可互换。
 - 非默认同步调用和 resume 使用同一严格 Agent resolver；未知/已删除 Agent、非 pending ref、同 thread 跨 Agent 伪造 ref 返回明确 4xx，不回退 default。
 
+## 2.1 附件（两阶段上传）
+
+| 方法 | 完整路径 | 用途 | 主要请求/响应 |
+|---|---|---|---|
+| `POST` | `/api/v1/agents/{agent_id}/attachments` | 上传附件（multipart：`file`、`relative_path?`） | → 附件元数据；状态 `uploaded → parsing → ready/failed` |
+| `GET` | `/api/v1/agents/{agent_id}/attachments` | 列出当前 Agent 附件 | → `{attachments:[]}` |
+| `GET` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}` | 查询元数据/解析状态 | 跨 Agent 访问 404 |
+| `GET` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/content` | 结构摘要与文本块 | `{attachment, chunks[]}` |
+| `POST` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/retry` | 失败解析重试 | → 更新后的元数据 |
+| `POST` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}/cancel` | 取消上传/解析并删除 | → tombstone |
+| `DELETE` | `/api/v1/agents/{agent_id}/attachments/{attachment_id}` | 删除附件与解析产物 | → `{deleted:true}` |
+
+约定：
+
+- 附件按 Agent 隔离存储于 `workspace/attachments/{agent_id}/{attachment_id}/`；记录 SHA-256、MIME、签名校验、`scan_status=unscanned`（无扫描引擎时不伪装为已扫描）。
+- 聊天请求优先传 `attachment_ids`；服务端按关键词检索相关文本块注入模型上下文，Trace 记录块 ID/位置/截断信息，不记录原始二进制。
+- 会话历史仅保存附件 ID 与摘要行，不保存完整解析文本。
+
 ## 3. Console 身份认证
 
 | 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
 |---|---|---|---|---|
-| `GET` | `/api/v1/auth/status` | 查询是否需要登录及当前 Token 状态 | Header/cookie 可带 Token → `{login_required,authenticated,expires_in_minutes}` | FUN-064、FUN-066 |
-| `POST` | `/api/v1/auth/login` | Console 密码登录 | `{password}` → `{login_required,authenticated,token,expires_in_minutes}`，并写 HttpOnly cookie；错误密码 401 | FUN-066 |
-| `POST` | `/api/v1/auth/logout` | 清理 Console cookie | → `{authenticated:false}` | FUN-066 |
+| `GET` | `/api/v1/auth/status` | 登录/开放/bootstrap 状态 | → `{login_required,authenticated,open_mode,bootstrap_needed,user?}` | FUN-066 |
+| `POST` | `/api/v1/auth/bootstrap` | 创建首个 owner | `{username,password,display_name?,bootstrap_token?}` → 会话+csrf | FUN-066 |
+| `POST` | `/api/v1/auth/login` | 用户名+密码登录（兼容仅 password） | → token/csrf/user；失败 401/429 | FUN-066 |
+| `POST` | `/api/v1/auth/logout` | 注销当前会话 | → `{authenticated:false}` | FUN-066 |
+| `GET` | `/api/v1/auth/me` | 当前用户与权限集合 | 不含密码/密钥 | FUN-066 |
+| `GET/POST/PATCH/DELETE` | `/api/v1/users*` | 用户管理 | owner/admin；最后 owner 受事务保护 | FUN-066 |
+| `GET/PUT/POST/DELETE` | `/api/v1/acl/*` | Agent/KB 可见范围与授权 | private/workspace + viewer/editor/runner | FUN-066 |
+| `GET` | `/api/v1/audit` | 审计查询（cursor） | owner/admin；`mine=true` 看自己 | FUN-066 |
 
-## 4. 后台任务
+## 4. 后台任务（持久化队列）
 
 | 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
 |---|---|---|---|---|
-| `POST` | `/api/v1/tasks` | 创建任务并可自动运行 | `TaskCreateRequest` → `TaskResponse` | FUN-080 |
-| `GET` | `/api/v1/tasks` | 任务列表 | query `status?=pending|running|cancelling|completed|failed|cancelled` → `TaskResponse[]` | FUN-080 |
-| `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | → `TaskResponse`；不存在 404 | FUN-080 |
-| `POST` | `/api/v1/tasks/{task_id}/run` | 重跑任务 | 无 body → 当前 `TaskResponse`；运行中 409 | FUN-081 |
-| `POST` | `/api/v1/tasks/{task_id}/cancel` | 取消底层协程并等待确认 | 无 body → cancelled `TaskResponse`；重复取消幂等，completed/failed 返回 409 | FUN-082 |
+| `POST` | `/api/v1/tasks` | 创建任务；支持计划时间、优先级、幂等键 | `TaskCreateRequest` → `TaskResponse`（201）；幂等重复返回已有任务 | FUN-080 |
+| `GET` | `/api/v1/tasks` | 兼容旧列表 | query `status`（`pending` 映射 `queued`）→ `TaskResponse[]` | FUN-080 |
+| `GET` | `/api/v1/tasks/list` | 分页筛选列表 | cursor/agent/source/q/时间范围 → `{items,next_cursor}` | FUN-080 |
+| `GET` | `/api/v1/tasks/stats` | 队列统计 | → `TaskQueueStatsResponse` | FUN-122 |
+| `POST` | `/api/v1/tasks/queue/control` | 暂停/恢复领取 | `{paused}` → stats | FUN-080 |
+| `GET` | `/api/v1/tasks/events/stream` | SSE 任务事件 | `after_id` 续传；过旧游标 `reset` | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | → `TaskResponse`；404 | FUN-080 |
+| `PATCH` | `/api/v1/tasks/{task_id}` | 更新未运行任务 | revision 乐观锁；409 冲突 | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}/attempts` | 尝试历史 | → `TaskAttemptResponse[]` | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}/events` | 状态事件 | → `TaskEventResponse[]` | FUN-080 |
+| `POST` | `/api/v1/tasks/{task_id}/run` | 重跑 | 运行中 409 | FUN-081 |
+| `POST` | `/api/v1/tasks/{task_id}/cancel` | 取消 | 幂等；终态 409 | FUN-082 |
+| `POST` | `/api/v1/tasks/{task_id}/requeue` | dead-letter 人工入队 | 保留原尝试链 | FUN-080 |
 
-任务运行使用单进程 `RunRegistry`；pending/running/cancelling/cancelled/completed/failed 转换受限，cancelled 不会被完成/失败回写覆盖。注册表不提供跨进程、多副本或服务重启后的活动运行取消。
+SQLite WAL 持久化（`workspace/tasks/task_queue.sqlite3`）；启动幂等迁移 `task_history.json`（保留原文件）。Worker 单实例租约领取；重启后 `running/leased` → `interrupted`。并发：全局/Agent/Provider 连接限额；结果/错误脱敏截断。
 
 ## 5. Cron 与 Heartbeat
 
@@ -132,21 +164,36 @@ Cron 使用 UTC。Job 配置落盘于 `cron_jobs.json`；运行历史落盘于 `
 | `POST` | `/api/v1/skills/scan` | 扫描任意给定服务器目录 | `{path}` → `{safe,findings}` | FUN-043 |
 | `POST` | `/api/v1/skills/reload` | 重建 Agent 使技能生效 | body 可省略或 `{agent_id?}` → `{reloaded,agents}` | FUN-044 |
 
-## 8. Provider
+## 8. Provider 与模型连接
 
-`name` 当前注册值为 `openai`、`anthropic`、`ollama`。
+`name` 兼容值为 `openai`、`anthropic`、`ollama`；新连接使用 `conn_*` ID。API Key 经 AES-256-GCM 保险箱存储，需 `BOETCLAW_MASTER_KEY`（32 字节，仅环境变量）。
 
-| 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
-|---|---|---|---|---|
-| `GET` | `/api/v1/providers` | Provider 列表 | → `{providers:[]}` | FUN-026 |
-| `GET` | `/api/v1/providers/config` | 当前默认 Provider/模型 | → `{provider,model}` | FUN-027 |
-| `PUT` | `/api/v1/providers/default` | 修改默认 Provider/模型并写 `.env` | `{provider,model}` → 同结构 | FUN-027 |
-| `GET` | `/api/v1/providers/{name}/config` | 获取非敏感配置状态 | → `{name,api_key_configured,base_url,is_default,default_model}` | FUN-027 |
-| `PUT` | `/api/v1/providers/{name}/config` | 修改 API Key/base URL 并写 `.env` | `{api_key?,base_url?}` → 配置状态 | FUN-027 |
-| `GET` | `/api/v1/providers/{name}/models` | 模型列表 | → `{models:[]}` | FUN-027 |
-| `POST` | `/api/v1/providers/{name}/check` | 连通性检查 | 无 body → Provider 检查结果 | FUN-027 |
+### 8.1 兼容 Provider 路由
 
-更新默认值不会显式重建所有已创建 Agent；需要结合相应重载/重启流程验证运行时生效。
+| 方法 | 完整路径 | 用途 | 主要请求/响应 |
+|---|---|---|---|
+| `GET` | `/api/v1/providers` | Provider 类型列表 | → `{providers:[]}` |
+| `GET` | `/api/v1/providers/config` | 当前默认 | → `{provider,model,connection_id?}` |
+| `PUT` | `/api/v1/providers/default` | 修改默认（不写 API Key 到 `.env`） | `{provider,model}` |
+| `GET` | `/api/v1/providers/{name}/config` | 非敏感状态（无密钥回填） | 含 `credential_source`、`credential_fingerprint` |
+| `PUT` | `/api/v1/providers/{name}/config` | 保存至保险箱 | `{api_key?,base_url?}` |
+| `GET` | `/api/v1/providers/{name}/models` | 模型列表 | → `{models:[]}` |
+| `POST` | `/api/v1/providers/{name}/check` | 连通性检查 | 脱敏结果 |
+
+### 8.2 模型连接 API
+
+| 方法 | 完整路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v1/provider-connections/vault/status` | 保险箱状态 |
+| `GET` | `/api/v1/provider-connections` | 连接列表 |
+| `POST` | `/api/v1/provider-connections` | 创建（`validate_only` 可选） |
+| `PUT` | `/api/v1/provider-connections/{id}` | 更新（revision 冲突 409） |
+| `DELETE` | `/api/v1/provider-connections/{id}` | 删除（被引用 409） |
+| `POST` | `/api/v1/provider-connections/{id}/check` | 检测 |
+| `POST` | `/api/v1/provider-connections/{id}/set-default` | 设为默认 |
+| `POST` | `/api/v1/provider-connections/import-env` | 显式导入环境变量（提示手动清理 `.env`） |
+
+更新默认值不会显式重建所有已创建 Agent；进行中的运行保持连接快照。
 
 ## 9. ToolGuard 与审批
 

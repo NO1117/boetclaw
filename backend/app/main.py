@@ -14,19 +14,25 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import (
     agent,
     agents,
+    attachments,
     auth,
     cron,
     domain,
     files,
     gateway,
+    knowledge_bases,
+    memories,
     monitor,
     plugins,
     providers,
+    provider_connections,
     security,
     skills,
     tasks,
     tools,
+    voice,
 )
+from app.api.routes.users import acl_router, audit_router, users_router
 from app.core.config import settings
 from app.core.observability import setup_logging
 from app.middleware.api_security_mw import ApiSecurityMiddleware
@@ -57,9 +63,11 @@ async def lifespan(app: FastAPI):
             await task
         from app.services.cron_service import cron_service
         from app.services.run_registry import run_registry
+        from app.services.task_scheduler import task_scheduler
 
         await agent_idle_eviction_service.stop()
         cron_service.shutdown()
+        await task_scheduler.service.stop_worker()
         await run_registry.shutdown()
         await channel_manager.stop()
         await mcp_manager.disconnect()
@@ -69,6 +77,12 @@ async def lifespan(app: FastAPI):
             from app.core.observability import get_logger
 
             get_logger("startup").error("checkpoint_close_failed", error=str(exc))
+        from app.memory.service import memory_service
+
+        memory_service.close()
+        from app.identity.service import identity_service
+
+        identity_service.close()
 
 
 app = FastAPI(
@@ -90,6 +104,9 @@ app.add_middleware(ApiSecurityMiddleware)
 API_PREFIX = "/api/v1"
 app.include_router(agent.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(acl_router, prefix=API_PREFIX)
+app.include_router(audit_router, prefix=API_PREFIX)
 app.include_router(cron.router, prefix=API_PREFIX)
 app.include_router(tasks.router, prefix=API_PREFIX)
 app.include_router(domain.router, prefix=API_PREFIX)
@@ -100,7 +117,12 @@ app.include_router(files.router, prefix=API_PREFIX)
 app.include_router(security.router, prefix=API_PREFIX)
 app.include_router(skills.router, prefix=API_PREFIX)
 app.include_router(agents.router, prefix=API_PREFIX)
+app.include_router(attachments.router, prefix=API_PREFIX)
+app.include_router(knowledge_bases.router, prefix=API_PREFIX)
+app.include_router(memories.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
+app.include_router(provider_connections.router, prefix=API_PREFIX)
+app.include_router(voice.router, prefix=API_PREFIX)
 app.include_router(plugins.router, prefix=API_PREFIX)
 app.include_router(plugins.commands_router, prefix=API_PREFIX)
 

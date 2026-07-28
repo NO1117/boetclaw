@@ -18,13 +18,19 @@ from app.core.agent import agent_manager
 from app.core.observability import serialize_for_sse, trace_store
 from app.memory.plan_history_store import plan_history_store
 from app.memory.session_store import session_store
-from app.services.chat_orchestration import PreparedChat, prepare_chat
+from app.services.chat_orchestration import ChatPreparationError, PreparedChat, prepare_chat
 from app.services.run_registry import run_registry
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
 
 SSE_VERSION = "1"
+
+
+def _http_error(exc: ChatPreparationError) -> HTTPException:
+    if exc.detail:
+        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 def _sse_envelope(prepared: PreparedChat, event: str, data: object) -> dict:
@@ -50,15 +56,22 @@ def _sse(prepared: PreparedChat, event: str, data: object) -> dict[str, str]:
 async def chat(request: Request, body: ChatRequest):
     from app.agents.runtime import invoke_agent
     from app.i18n import reset_lang, set_lang
+    from app.identity.resource_acl import require_agent_access
 
+    require_agent_access(request, body.agent_id or "default", required="runner")
     try:
         prepared = await prepare_chat(
             message=body.message,
+            attachments=[item.model_dump() for item in body.attachments],
+            attachment_ids=body.attachment_ids,
+            knowledge_base_ids=body.knowledge_base_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
             lang=body.lang,
             headers=request.headers,
+            provider=body.provider,
+            model=body.model,
         )
         lang_token = set_lang(prepared.lang)
         try:
@@ -86,19 +99,29 @@ async def chat(request: Request, body: ChatRequest):
                     source=prepared.source,
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
+                    user_content=prepared.user_content,
+                    model_string=prepared.model_string,
                 )
         finally:
             reset_lang(lang_token)
         session_store.record_turn(
             thread_id=prepared.thread_id,
             agent_id=prepared.agent_id,
-            user_message=prepared.message,
+            user_message=prepared.history_user_message,
             assistant_message=str(result.get("response", "")),
             trace_id=prepared.trace_id,
             run_id=prepared.run_id,
             source=prepared.source,
+            attachment_refs=prepared.attachment_refs,
         )
-        return ChatResponse(**result)
+        payload = {k: v for k, v in result.items() if k in ChatResponse.model_fields}
+        payload["memory_context"] = prepared.memory_context
+        payload["memory_candidates"] = prepared.memory_candidates
+        payload["memory_actions"] = prepared.memory_actions
+        payload["knowledge_citations"] = prepared.knowledge_citations
+        return ChatResponse(**payload)
+    except ChatPreparationError as exc:
+        raise _http_error(exc) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -137,15 +160,25 @@ async def plan_history(agent_id: str = "", thread_id: str = "", limit: int = 100
 
 @router.post("/chat/stream")
 async def chat_stream(request: Request, body: ChatRequest):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, body.agent_id or "default", required="runner")
     try:
         prepared = await prepare_chat(
             message=body.message,
+            attachments=[item.model_dump() for item in body.attachments],
+            attachment_ids=body.attachment_ids,
+            knowledge_base_ids=body.knowledge_base_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
             lang=body.lang,
             headers=request.headers,
+            provider=body.provider,
+            model=body.model,
         )
+    except ChatPreparationError as exc:
+        raise _http_error(exc) from exc
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
         if 400 <= status_code < 500:
@@ -185,6 +218,10 @@ async def chat_stream(request: Request, body: ChatRequest):
                     source=prepared.source,
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
+                    user_content=prepared.user_content,
+                    model_string=prepared.model_string,
+                    attachment_count=len(prepared.attachment_summaries),
+                    retrieval_hits=prepared.retrieval_hits,
                 ):
                     if event.pop("kind") == "update":
                         yield _sse(prepared, "update", event)
@@ -194,11 +231,12 @@ async def chat_stream(request: Request, body: ChatRequest):
                 session_store.record_turn(
                     thread_id=prepared.thread_id,
                     agent_id=prepared.agent_id,
-                    user_message=prepared.message,
+                    user_message=prepared.history_user_message,
                     assistant_message=str(result.get("response", "")),
                     trace_id=prepared.trace_id,
                     run_id=prepared.run_id,
                     source=prepared.source,
+                    attachment_refs=prepared.attachment_refs,
                 )
                 if result.get("interrupted"):
                     yield _sse(prepared, "interrupt", result)
@@ -208,6 +246,12 @@ async def chat_stream(request: Request, body: ChatRequest):
                     {
                         "response": result.get("response", ""),
                         "interrupted": bool(result.get("interrupted")),
+                        "run_metrics": result.get("run_metrics"),
+                        "memory_context": prepared.memory_context,
+                        "memory_candidates": prepared.memory_candidates,
+                        "memory_actions": prepared.memory_actions,
+                        "knowledge_citations": prepared.knowledge_citations,
+                        "knowledge_retrieval": prepared.knowledge_retrieval_trace,
                     },
                 )
         except Exception as exc:
@@ -216,6 +260,16 @@ async def chat_stream(request: Request, body: ChatRequest):
             reset_lang(lang_token)
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/runs/metrics/{trace_id}")
+async def get_run_metrics(trace_id: str):
+    from app.services.run_metrics import run_metrics_tracker
+
+    summary = run_metrics_tracker.get(trace_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="run metrics not found")
+    return summary.to_dict()
 
 
 @router.post("/runs/cancel", response_model=RunCancelResponse)

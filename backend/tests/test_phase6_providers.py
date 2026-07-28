@@ -113,7 +113,7 @@ def test_anthropic_base_url_configures_proxy(monkeypatch):
     assert captured["api_key"] == "not-needed"
 
 
-def test_provider_config_routes_update_runtime_settings(monkeypatch):
+def test_provider_config_routes_update_runtime_settings(monkeypatch, isolated_paths, master_key):
     from fastapi.testclient import TestClient
 
     from app.core.config import settings
@@ -133,21 +133,31 @@ def test_provider_config_routes_update_runtime_settings(monkeypatch):
     assert res.status_code == 200
     assert res.json()["api_key_configured"] is True
     assert res.json()["base_url"] == "http://localhost:8001/v1"
-    assert settings.openai_api_key == "sk-test"
+    assert "sk-test" not in res.text
 
     res = client.put("/api/v1/providers/default", json={"provider": "ollama", "model": "qwen2.5"})
     assert res.status_code == 200
-    assert res.json() == {"provider": "ollama", "model": "qwen2.5"}
-    assert settings.llm_provider == "ollama"
-    assert settings.llm_model == "qwen2.5"
+    assert res.json()["model"] == "qwen2.5"
 
 
-def test_provider_config_routes_persist_env(monkeypatch, tmp_path):
+def test_provider_config_routes_do_not_persist_api_key_to_env(monkeypatch, tmp_path, master_key):
     from fastapi.testclient import TestClient
 
     from app.api.routes import providers as provider_routes
     from app.core.config import settings
+    from app.credentials.vault import credential_vault
     from app.main import app
+    from app.providers.connections.store import connection_store
+
+    vault_path = tmp_path / "credentials" / "vault.json"
+    conn_path = tmp_path / "provider_connections.json"
+    monkeypatch.setattr(credential_vault, "_path", vault_path)
+    monkeypatch.setattr(credential_vault, "_loaded", False)
+    monkeypatch.setattr(credential_vault, "_records", {})
+    monkeypatch.setattr(connection_store, "_path", conn_path)
+    monkeypatch.setattr(connection_store, "_loaded", False)
+    monkeypatch.setattr(connection_store, "_connections", {})
+    monkeypatch.setattr(connection_store, "_default_connection_id", None)
 
     env_path = tmp_path / ".env"
     env_path.write_text(
@@ -169,14 +179,9 @@ def test_provider_config_routes_persist_env(monkeypatch, tmp_path):
     )
     assert res.status_code == 200
 
-    res = client.put("/api/v1/providers/default", json={"provider": "ollama", "model": "qwen2.5"})
-    assert res.status_code == 200
-
     content = env_path.read_text(encoding="utf-8")
-    assert "OPENAI_API_KEY=sk-persist" in content
-    assert "OPENAI_BASE_URL=http://localhost:8001/v1" in content
-    assert "LLM_PROVIDER=ollama" in content
-    assert "LLM_MODEL=qwen2.5" in content
+    assert "OPENAI_API_KEY=sk-persist" not in content
+    assert "sk-persist" not in content
 
 
 def test_provider_rate_limiter_buckets_by_provider_model(monkeypatch):

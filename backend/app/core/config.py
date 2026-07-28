@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     console_password: str = ""
     console_jwt_secret: str = ""
     console_jwt_ttl_minutes: int = 480
+    console_cookie_secure: bool = False
+    bootstrap_token: str = ""
+    login_lock_base_seconds: int = 30
+    identity_sqlite_path: Path = Field(
+        default=BASE_DIR / "workspace" / "identity" / "identity.sqlite3"
+    )
 
     # Paths
     workspace_dir: Path = Field(default=BASE_DIR / "workspace")
@@ -75,10 +81,73 @@ class Settings(BaseSettings):
     plugins_dir: Path = Field(default=BASE_DIR / "plugins_ext")
 
     # Memory & context
-    memory_backend: str = "file"  # file|store|none
+    memory_backend: str = "sqlite"  # file|store|none|sqlite
+    memory_auto_mode: str = "review"  # off|review|auto
+    memory_sqlite_path: Path = Field(default=BASE_DIR / "workspace" / "memory")
+    memory_allow_inmemory_fallback: bool = False
+    memory_max_content_chars: int = 2000
+    memory_max_tags: int = 10
+    memory_max_per_agent: int = 500
+    memory_query_max_chars: int = 200
+    memory_page_max_size: int = 100
+    memory_retrieval_max_items: int = 8
+    memory_retrieval_max_chars: int = 4000
     context_summarization_enabled: bool = False
     context_keep_messages: int = 20
     context_trigger_tokens: int = 4000
+
+    # Speech / Voice (STT/TTS, decoupled from chat models)
+    speech_provider: str = "openai_compatible"
+    speech_api_key: str = ""
+    speech_base_url: str = ""
+    speech_stt_model: str = "whisper-1"
+    speech_tts_model: str = "tts-1"
+    speech_tts_voice: str = "alloy"
+    speech_tts_format: str = "mp3"
+    speech_max_upload_bytes: int = 25 * 1024 * 1024
+    speech_max_duration_seconds: int = 600
+    speech_max_text_chars: int = 4096
+    speech_rate_limit_per_minute: int = 30
+    speech_max_concurrent: int = 4
+    speech_timeout_seconds: int = 120
+    speech_temp_ttl_seconds: int = 300
+    speech_stt_price_per_minute: float = 0.0
+    speech_tts_price_per_million_chars: float = 0.0
+
+    # Attachments
+    attachment_ttl_days: int = 30
+    attachment_chunk_max_chars: int = 4000
+    attachment_max_chunks: int = 500
+    attachment_max_parse_chars: int = 2_000_000
+    attachment_retrieval_max_chunks: int = 8
+    attachment_retrieval_max_chars: int = 24_000
+
+    # Knowledge base
+    kb_max_documents_per_kb: int = 200
+    kb_max_total_bytes_per_kb: int = 500 * 1024 * 1024
+    kb_max_upload_batch: int = 20
+
+    # Durable task queue (SQLite WAL, single-instance worker)
+    task_queue_sqlite_path: Path = Field(default=BASE_DIR / "workspace" / "tasks" / "task_queue.sqlite3")
+    task_queue_legacy_json_path: Path = Field(default=BASE_DIR / "workspace" / "tasks" / "task_history.json")
+    task_queue_global_concurrency: int = 4
+    task_queue_agent_concurrency: int = 2
+    task_queue_provider_concurrency: int = 2
+    task_queue_lease_seconds: int = 120
+    task_queue_shutdown_grace_seconds: int = 30
+    task_queue_poll_interval_seconds: float = 1.0
+    task_queue_idempotency_window_seconds: int = 3600
+    task_queue_default_max_attempts: int = 3
+    task_queue_default_timeout_seconds: int = 600
+    task_queue_backoff_base_seconds: int = 5
+    task_queue_backoff_max_seconds: int = 300
+    task_queue_result_max_chars: int = 8000
+    task_queue_error_max_chars: int = 4000
+    task_queue_text_max_chars: int = 8000
+
+    # Graph cache (isolated per-request agent graphs)
+    graph_cache_max_size: int = 32
+    graph_cache_ttl_seconds: int = 900
 
     # i18n
     lang: str = "zh"

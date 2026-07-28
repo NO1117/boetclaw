@@ -21,6 +21,10 @@ async def phase1_fast(app: Any) -> None:
 
     settings.workspace_dir.mkdir(parents=True, exist_ok=True)
 
+    from app.services.attachments.startup_check import verify_attachment_parser_dependencies
+
+    app.state.attachment_parsers_missing = verify_attachment_parser_dependencies()
+
     from app.core.checkpoint import checkpoint_provider
 
     try:
@@ -29,6 +33,15 @@ async def phase1_fast(app: Any) -> None:
     except Exception as exc:  # noqa: BLE001
         app.state.checkpoint_ready = False
         logger.error("checkpoint_init_failed", error=str(exc))
+
+    from app.memory.service import memory_service
+
+    try:
+        memory_service.initialize()
+        app.state.memory_ready = memory_service.enabled
+    except Exception as exc:  # noqa: BLE001
+        app.state.memory_ready = False
+        logger.error("memory_init_failed", error=str(exc))
 
     if checkpoint_provider.backend == "memory":
         from app.security.approval import approval_service
@@ -48,6 +61,24 @@ async def phase1_fast(app: Any) -> None:
     from app.plugins.loader import discover_and_load
 
     discover_and_load()
+
+    from app.providers.connections.service import connection_service
+
+    try:
+        connection_service.migrate_from_settings_if_empty()
+        app.state.connections_ready = True
+    except Exception as exc:  # noqa: BLE001
+        app.state.connections_ready = False
+        logger.error("connections_init_failed", error=str(exc))
+
+    from app.identity.service import identity_service
+
+    try:
+        identity_service.initialize()
+        app.state.identity_ready = True
+    except Exception as exc:  # noqa: BLE001
+        app.state.identity_ready = False
+        logger.error("identity_init_failed", error=str(exc))
 
     app.state.ready = True
     app.state.agent_ready = False
@@ -72,6 +103,16 @@ async def phase2_background(app: Any) -> None:
 
         cron_service.start()
         heartbeat_service.start(scheduler=cron_service._scheduler)
+
+        from app.services.task_scheduler import task_scheduler
+
+        await task_scheduler.service.start_worker()
+
+        from app.services.attachments.cleanup import run_attachment_cleanup
+
+        cleanup_stats = run_attachment_cleanup()
+        if cleanup_stats["expired"]:
+            logger.info("attachment_cleanup", **cleanup_stats)
 
         logger.info("phase2_done", elapsed_ms=round((time.perf_counter() - t) * 1000, 2))
     except Exception as exc:  # noqa: BLE001

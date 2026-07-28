@@ -106,11 +106,12 @@ def test_monitor_metrics_prometheus_text(monkeypatch, tmp_path):
     from app.services.gateway.base import GatewayMessage
     from app.services.gateway.channels.qq import QQChannel
     from app.services.gateway.manager import channel_manager
-    from app.services.task_scheduler import TaskStatus, task_scheduler
+    from app.services.task_scheduler import TaskScheduler, TaskStatus
     from app.tools.mcp_manager import mcp_manager
 
-    monkeypatch.setattr(task_scheduler, "_tasks", {}, raising=False)
-    monkeypatch.setattr(task_scheduler, "store_path", tmp_path / "task_history.json", raising=False)
+    scheduler = TaskScheduler(store_path=tmp_path / "tasks" / "task_history.json")
+    monkeypatch.setattr("app.api.routes.monitor.task_scheduler", scheduler, raising=False)
+    monkeypatch.setattr("app.services.task_scheduler.task_scheduler", scheduler, raising=False)
     monkeypatch.setattr(channel_manager, "_channels", {}, raising=False)
     monkeypatch.setattr(channel_manager, "_queues", {}, raising=False)
     monkeypatch.setattr(mcp_manager, "_recover_counts", {"success": 2, "failed": 1}, raising=False)
@@ -121,8 +122,8 @@ def test_monitor_metrics_prometheus_text(monkeypatch, tmp_path):
         "qq",
         GatewayMessage(platform="qq", user_id="u1", user_name="n", content="ping", message_id="m1", chat_id="c1"),
     )
-    task = task_scheduler.create("metrics", "ping")
-    task_scheduler.update_status(task.id, TaskStatus.COMPLETED)
+    task = scheduler.create("metrics", "ping")
+    scheduler.update_status(task.id, TaskStatus.COMPLETED)
     emit_event(EventType.AGENT_START, {"thread_id": "metrics-thread"}, trace_id="metrics-trace", run_id="metrics-run")
     emit_event(EventType.AGENT_END, {"thread_id": "metrics-thread"}, trace_id="metrics-trace", run_id="metrics-run")
     emit_event(EventType.TOOL_CALL, {"tool": "x"}, trace_id="metrics-trace")

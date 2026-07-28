@@ -125,15 +125,65 @@
 .task-item {
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 14px 16px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
+  margin-bottom: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  align-items: flex-start;
+}
+
+.task-item:hover,
+.task-item:focus-visible {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+}
+
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.filter-chip {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filter-chip.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.task-search {
+  margin-left: auto;
+  min-width: 220px;
+  flex: 1;
+  max-width: 320px;
+}
+
+.task-status-label {
+  font-size: 11px;
+  font-weight: 600;
   margin-bottom: 4px;
 }
 
-.task-item:hover {
-  background: var(--bg-hover);
+.task-id {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .task-status-icon {
@@ -186,3 +236,51 @@
 }
 
 .spin { animation: spin 1s linear infinite; }
+
+.queue-stats-bar {
+  display: flex;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.sse-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+.sse-indicator.online { color: var(--success, #22c55e); }
+.sse-indicator.offline { color: var(--text-muted, #94a3b8); }
+
+.create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.attempt-timeline,
+.event-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.timeline-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  font-size: 12px;
+}
+
+.retry-countdown {
+  color: var(--warning, #f59e0b);
+  font-size: 12px;
+  margin: 8px 0;
+}

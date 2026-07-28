@@ -44,7 +44,7 @@ BoetClaw 是面向钻井业务的本地优先智能体工作台。系统以 Deep
 
 | 编号 | 需求 | 状态 |
 |---|---|---|
-| REQ-020 | 多用户账号、RBAC、租户隔离、SSO/OIDC | 待实现 |
+| REQ-020 | 多用户账号、RBAC、租户隔离、SSO/OIDC | 部分实现 | 单工作区用户/角色/资源 ACL 已落地；租户隔离与 SSO/OIDC 不做 |
 | REQ-021 | 领域/审计 PostgreSQL/SQLite 事务存储、分布式队列和多实例调度 | 待实现（仅 LangGraph checkpoint 已使用单机 SQLite） |
 | REQ-022 | 生产级密钥库、密钥轮换和字段级加密 | 待实现 |
 | REQ-023 | WITSML、实时井场流数据和完整行业数据治理 | 待实现 |
@@ -96,10 +96,10 @@ BoetClaw 是面向钻井业务的本地优先智能体工作台。系统以 Deep
 | REQ-161 | 风险工具可中断等待人工批准或拒绝 | 已实现（单实例） | 真实 LangGraph 测试验证 approve 单次执行、reject 零执行、节点重放复用审批、重复/并发裁决互斥及非默认 Agent resolver |
 | REQ-162 | 审批历史跨重启保持 pending 并可审计；不可恢复时明确失败 | 已实现 | SQLite 可恢复 pending；恢复失败或重启遇到 resuming 转不可自动重试的 `resume_failed`，旧缺 ref/checkpoint 缺失返回 409 |
 | REQ-163 | API 支持 Bearer/X-API-Token 与按 token 优先、IP 兜底限流 | 已实现 | 默认无 Token、限流为 0 时开放 |
-| REQ-164 | Console 可选密码登录并签发短期 JWT | 已实现 | HMAC-SHA256 JWT、HttpOnly cookie 和前端 localStorage |
+| REQ-164 | Console 可选密码登录并签发短期 JWT | 已实现 | 用户名+密码 + 兼容仅密码；HttpOnly Cookie + CSRF；HMAC-SHA256 JWT |
 | REQ-165 | 渠道按 platform/user_id 白名单与用户级限流 | 已实现 | 空白名单兼容放行 |
 | REQ-166 | Webhook 必须进行生产级平台签名验证 | 已实现（可配置） | 路由早期调用 `verify_signature`；配置密钥强制校验，未配置 `signature=skipped`；不含飞书 encrypt 解密与真实平台联调 |
-| REQ-167 | 用户、角色、资源级授权和审计主体关联 | 待实现 | 当前为本地/单用户安全模型 |
+| REQ-167 | 用户、角色、资源级授权和审计主体关联 | 已实现 | 单实例单工作区；Argon2id、会话撤销、资源 ACL、审计 cursor；无租户/SSO |
 
 ### 4.5 任务、调度与渠道
 

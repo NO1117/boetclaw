@@ -9,12 +9,42 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.execution_ref import ExecutionRef
 
 
+class ChatAttachment(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=512)
+    relative_path: str = Field("", max_length=2048)
+    mime_type: str = Field("application/octet-stream", max_length=256)
+    size: int = Field(..., ge=0)
+    kind: Literal["text", "image", "binary"] = "binary"
+    content_base64: str = Field("", max_length=35_000_000)
+
+
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, description="User message")
+    message: str = Field("", description="User message")
+    attachments: list[ChatAttachment] = Field(default_factory=list)
+    attachment_ids: list[str] = Field(default_factory=list, description="Uploaded attachment IDs")
     thread_id: str | None = Field(None, description="Conversation thread ID")
     agent_id: str | None = Field(None, description="Target agent workspace id")
     source: str = Field("user", description="Request source: user|channel|cron|heartbeat")
     lang: str | None = Field(None, description="Response language override, e.g. zh or en")
+    provider: str | None = Field(None, description="Per-request provider override")
+    model: str | None = Field(None, description="Per-request model override")
+    knowledge_base_ids: list[str] | None = Field(
+        None,
+        description="Knowledge base IDs for this chat; omit for defaults, [] to disable",
+    )
+
+    @model_validator(mode="after")
+    def require_message_or_attachments(self) -> "ChatRequest":
+        has_inline = bool(self.attachments)
+        has_ids = bool(self.attachment_ids)
+        if not self.message.strip() and not has_inline and not has_ids:
+            raise ValueError("message、attachments 或 attachment_ids 至少提供一个")
+        if has_inline and has_ids:
+            raise ValueError("attachments 与 attachment_ids 不能同时使用")
+        if (self.provider is None) ^ (self.model is None):
+            if self.provider or self.model:
+                raise ValueError("provider 与 model 必须同时提供")
+        return self
 
 
 class ChatResponse(BaseModel):
@@ -28,6 +58,10 @@ class ChatResponse(BaseModel):
     agent_id: str = "default"
     execution_ref: ExecutionRef | None = None
     payload: Any = None
+    memory_context: dict[str, Any] | None = None
+    memory_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    memory_actions: list[dict[str, Any]] = Field(default_factory=list)
+    knowledge_citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RunCancelRequest(BaseModel):
@@ -90,6 +124,21 @@ class TaskCreateRequest(BaseModel):
     gateway: str = ""
     gateway_user: str = ""
     metadata: dict[str, Any] = {}
+    agent_id: str = ""
+    scheduled_at: str = ""
+    priority: int = 0
+    max_attempts: int | None = None
+    idempotency_key: str = ""
+
+
+class TaskUpdateRequest(BaseModel):
+    revision: int = Field(..., ge=1)
+    title: str | None = None
+    prompt: str | None = None
+    priority: int | None = None
+    scheduled_at: str | None = None
+    max_attempts: int | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class TaskResponse(BaseModel):
@@ -105,6 +154,59 @@ class TaskResponse(BaseModel):
     gateway: str = ""
     created_at: str
     updated_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    revision: int = 1
+    scheduled_at: str = ""
+    priority: int = 0
+    attempt_count: int = 0
+    max_attempts: int = 3
+    retry_after: str = ""
+    agent_id: str = "default"
+    source: str = "api"
+    run_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskAttemptResponse(BaseModel):
+    id: int
+    task_id: str
+    attempt_number: int
+    status: str
+    worker_id: str = ""
+    run_id: str = ""
+    trace_id: str = ""
+    thread_id: str = ""
+    result_summary: str = ""
+    error_summary: str = ""
+    error_category: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: int = 0
+
+
+class TaskEventResponse(BaseModel):
+    id: int
+    task_id: str
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class TaskListResponse(BaseModel):
+    items: list[TaskResponse]
+    next_cursor: str | None = None
+
+
+class TaskQueueStatsResponse(BaseModel):
+    queue_depth: int = 0
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    dead_letter_count: int = 0
+    retry_total: int = 0
+    lease_reclaimed_total: int = 0
+    paused: bool = False
+
+
+class TaskQueueControlRequest(BaseModel):
+    paused: bool
 
 
 class ToolInfo(BaseModel):

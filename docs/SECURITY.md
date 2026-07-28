@@ -1,9 +1,10 @@
 # 安全说明
 
-> 文档基线：2026-07-16。
+> 文档基线：2026-07-28。
 
 本文描述当前代码已经实现的控制及其边界，不构成安全认证。主要事实来源为
-`backend/app/security/`、`backend/app/middleware/`、`backend/app/services/gateway/`、
+`backend/app/security/`、`backend/app/middleware/`、`backend/app/credentials/`、
+`backend/app/providers/connections/`、`backend/app/services/gateway/`、
 `backend/app/skills_system/scanner.py`、`backend/app/plugins/loader.py` 和对应测试。
 
 ## ToolGuard
@@ -80,31 +81,32 @@ backend/workspace/security/approval_history.json
 - 计划确认、编辑及失败历史有后端测试，但这仍是 Agent 工作流控制，不是权限边界。
 - 在图外 `interrupt()` 失败时异常上抛，不再伪装为可靠暂停。
 
-## API Token 与 Console JWT
+## API Token、团队身份与 Console 会话
 
-`ApiSecurityMiddleware` 只保护 `/api/v1` 路径。以下规则需要同时理解：
+`ApiSecurityMiddleware` 只保护 `/api/v1` 路径。当前身份模型为**单实例、单工作区、多用户**：
 
-- `API_TOKEN` 和 `CONSOLE_PASSWORD` 都为空时，API 默认开放，适合可信本地开发，不适合公网。
-- API Token 支持 `Authorization: Bearer <token>` 或 `X-API-Token`。
-- 设置 `CONSOLE_PASSWORD` 后，`POST /api/v1/auth/login` 返回 HMAC-SHA256 签名的 JWT，
-  同时写入 `boetclaw_console_token` HttpOnly、SameSite=Lax Cookie。
-- JWT 密钥按 `CONSOLE_JWT_SECRET`、`API_TOKEN`、`CONSOLE_PASSWORD` 的顺序回退；
-  生产环境应设置独立、随机且足够长的 `CONSOLE_JWT_SECRET`。
-- JWT 默认有效期由 `CONSOLE_JWT_TTL_MINUTES=480` 控制；当前没有服务端撤销列表，
-  logout 只删除客户端 Cookie。
-- `/api/v1/auth/*`、`/api/v1/monitor/health` 以及 `/api/v1/gateway/*/webhook` 绕过中间件鉴权
-  （与限流）。Webhook 依赖各渠道平台验签，见下文。
-- `/docs`、`/openapi.json`、`/ui/` 和根路径不在 `/api/v1` 下，因此该中间件不保护它们。
-- Cookie 当前未设置 `Secure` 属性。公网部署必须终止 HTTPS，并应评估在代码或代理层补强 Cookie 策略。
+- 无用户且未配置 `API_TOKEN`/`CONSOLE_PASSWORD` 时为开放模式（可信本地开发）。
+- 空用户库可通过本机或 `BOOTSTRAP_TOKEN` 调用 `POST /api/v1/auth/bootstrap` 创建首个 owner。
+- 用户密码使用 Argon2id；会话 JWT 含 `user_id/role/token_version/session_id`，服务端 SQLite WAL 持久化会话，支持撤销与 token version 失效。
+- Cookie：`boetclaw_console_token`（HttpOnly、SameSite=Lax；生产可设 `CONSOLE_COOKIE_SECURE=true`）+ CSRF（`boetclaw_csrf` / `X-CSRF-Token`）。Bearer/API Token 写请求不校验 Cookie CSRF。
+- `API_TOKEN` 兼容为受审计的 legacy service principal（admin 级，不可管理 owner / 读取凭据明文）。
+- `CONSOLE_PASSWORD` 仍可作为兼容登录；owner 创建后 UI 提示停用，不自动改 `.env`。
+- 系统角色：`owner` / `admin` / `operator` / `viewer`；Agent/知识库支持 `private|workspace` 与 `viewer|editor|runner` 授权。无权限资源统一 404。
+- 身份库默认路径：`workspace/identity/identity.sqlite3`（WAL）；审计不记录密码/token/全文。
 
 建议生产配置：
 
 ```env
 API_TOKEN=<独立随机长令牌>
-CONSOLE_PASSWORD=<独立强密码>
 CONSOLE_JWT_SECRET=<独立随机长密钥>
 CONSOLE_JWT_TTL_MINUTES=60
+CONSOLE_COOKIE_SECURE=true
+BOOTSTRAP_TOKEN=<可选，非本机 bootstrap 时必填>
+# CONSOLE_PASSWORD=  # 迁移期兼容；团队启用后建议移除
 ```
+
+`/api/v1/auth/*`、`/api/v1/monitor/health` 以及 `/api/v1/gateway/*/webhook` 绕过中间件鉴权（与限流）。Webhook 依赖各渠道平台验签。
+`/docs`、`/openapi.json`、`/ui/` 和根路径不在 `/api/v1` 下，因此该中间件不保护它们。
 
 ## 限流
 
@@ -156,10 +158,92 @@ ENABLED_PLUGINS=
 插件导入发生在后端进程内，没有进程、容器、文件系统或网络沙箱；启用插件等价于信任其 Python
 代码。上线前应固定来源和版本、人工审查、最小化容器权限，并在隔离环境验证。
 
+## Provider 凭据保险箱
+
+Provider API Key 可通过控制台写入本地 AES-256-GCM 保险箱（`backend/app/credentials/vault.py`），
+并与 Provider 连接配置分离（`backend/app/providers/connections/`）。实现边界如下。
+
+### 威胁边界与保护范围
+
+保险箱提供的是**单机、本地、静态加密存储**，不是云 KMS/HSM、多租户密钥托管或 OS 沙箱。
+
+- **保护对象**：磁盘上的 `workspace/credentials/vault.json` 中的 Provider API Key 密文；损坏文件会隔离到
+  `workspace/credentials/quarantine/`。
+- **不保护**：运行中的进程内存、已配置主密钥的环境、拥有 workspace 读权限的操作系统用户、
+  未清理的 `backend/.env` 明文、容器/备份介质上的副本。攻击者若同时获得 vault 文件与主密钥，可解密全部凭据。
+- **算法**：标准 AEAD（AES-256-GCM）；禁止依赖 Base64 伪加密或仓库内固定密钥。
+- **文件权限**：写入后尝试 `chmod 600`；仍须限制 workspace 目录的宿主/容器挂载权限。
+- **并发与持久化**：原子写入与进程内锁；无跨进程/多副本协调。多实例部署不应共享同一 vault 文件。
+
+### 主密钥（`BOETCLAW_MASTER_KEY`）
+
+主密钥**仅从环境变量**读取（`backend/app/credentials/master_key.py`），不写入仓库、
+不通过 API 下发、不持久化到 workspace。
+
+- **格式**：32 字节随机值，以标准或 URL-safe Base64（推荐）或 64 字符 hex 注入。
+- **生成**（在可信本机执行，将输出粘贴到部署环境，勿写入 git）：
+
+```powershell
+python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+```
+
+```bash
+python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+```
+
+- **注入**：本地开发可写入未提交的 `backend/.env`；生产应使用 secrets manager、
+  编排器 secret 或受控挂载，并限制仅 backend 进程可读。Docker Compose 通过 `backend/.env`
+  注入，**不得**把真实主密钥提交到镜像或版本库。
+- **轮换**：在应用运行且当前主密钥可解密的前提下，调用 vault 的 `rotate_master_key(new_key)` 重加密全部记录；
+  随后更新环境中的 `BOETCLAW_MASTER_KEY` 并重启进程（或 `clear_master_key_cache()` 后重载）。
+  轮换前必须备份 `vault.json`；用错误/旧主密钥启动时解密失败并返回 503，**不会**自动损坏或抹除密文。
+- **丢失主密钥**：无法恢复已加密凭据；只能从 Provider 控制台重新签发 API Key 并重新保存，或回退到环境变量凭据。
+
+### 无主密钥降级
+
+未配置 `BOETCLAW_MASTER_KEY` 时：
+
+- 保险箱**写入**（创建/替换连接中的 API Key、显式导入）禁用，API 返回 503 与可操作说明；
+- 已存在于 `OPENAI_API_KEY` 等环境变量中的凭据**仍可**用于聊天与连接检测；
+- 应用**不会**因此崩溃。生产若需控制台保存密钥，必须配置主密钥。
+
+### 环境变量导入与 `.env` 清理
+
+- 启动时**只读**兼容现有环境变量，**不会**自动改写或删除 `backend/.env`。
+- `POST /api/v1/provider-connections/import-env` 为显式一次性导入；成功响应含
+  `env_cleanup_required: true` 时，用户须**手动**从 `backend/.env` 删除对应明文 Key
+  （如 `OPENAI_API_KEY`）；系统不会伪称已删除。
+- 经 `/api/v1/providers/*/config` 保存的 API Key 只写保险箱，**不再**调用 `update_env_file` 写入明文。
+
+### 密钥不进日志 / API / Trace
+
+- 完整 API Key、Authorization 头、密文、nonce、主密钥不得出现在 REST 响应、OpenAPI 示例、
+  结构化日志、Trace/审计详情或测试快照中。
+- 连接 API 仅返回 `credential_configured`、`credential_source`（`vault` / `env` / `none`）
+  及末四位 `credential_fingerprint`（可安全取得时）。
+- `backend/app/credentials/redaction.py` 与 observability 事件路径会对常见密钥模式脱敏；
+  上游错误若含密钥，仍应视为不可信输入并依赖脱敏层。
+
+### 备份与恢复
+
+- **须一并保护**：`workspace/credentials/vault.json` 与当时有效的 `BOETCLAW_MASTER_KEY`。
+  仅有 vault 文件而无主密钥无法解密；仅有主密钥而无 vault 则无法恢复已存连接引用。
+- **建议**：备份整个 `workspace/`（含 `provider_connections.json`），加密存储、限制访问、
+  定期做恢复演练。恢复后确认 vault 状态 API 与一次连接检测。
+- **quarantine**：若 vault JSON 损坏，原文件会移入 quarantine；恢复需运维从备份还原或重建凭据。
+
+```env
+# 生产示例：占位，勿提交真实值
+BOETCLAW_MASTER_KEY=
+```
+
+详见 `docs/API.md` 中 Provider 连接与 `GET /api/v1/provider-connections/vault/status` 索引。
+
 ## 其他边界与生产要求
 
 - `source="cron"` 和 `source="heartbeat"` 默认不写长期记忆，可降低自动任务污染，但不是内容安全过滤。
-- `backend/.env`、workspace 中的审批/消息/任务历史和 provider 凭据都应按敏感数据保护。
+- 任务结果、错误、事件与运行快照经脱敏截断后写入 SQLite；API Key、凭据与完整知识库正文不得进入任务表。
+- `backend/.env`、workspace 中的审批/消息/任务队列与历史、`workspace/credentials/` 与 provider 连接配置都应按敏感数据保护。
 - 收紧 `CORS_ORIGINS`，不要保留不需要的开发源。
 - 对外仅暴露必要路径；限制 `/docs`、`/openapi.json`、管理 API 和 `/ui/` 的访问。
 - 保持 `TOOL_GUARD_ENABLED=true`，不要把 `off` 用于生产。

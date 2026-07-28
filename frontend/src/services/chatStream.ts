@@ -1,4 +1,5 @@
 import { parseSSEBlocks, type ParsedSSEBlock } from './sse'
+import { apiFetch, getCsrfToken } from './authClient'
 
 const API_BASE = '/api/v1'
 
@@ -38,7 +39,7 @@ export async function cancelAgentRun(
   threadId: string,
   runId = '',
 ): Promise<RunCancelResult> {
-  const res = await fetch(`${API_BASE}/agent/runs/cancel`, {
+  const res = await apiFetch(`${API_BASE}/agent/runs/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, thread_id: threadId, run_id: runId }),
@@ -81,6 +82,20 @@ export function streamChat(
   onEvent: (data: StreamEnvelope) => void,
   onDone: () => void,
   onError: (err: string) => void,
+  extras?: {
+    attachments?: Array<{
+      filename: string
+      relative_path?: string
+      mime_type: string
+      size: number
+      kind: 'text' | 'image' | 'binary'
+      content_base64: string
+    }>
+    attachment_ids?: string[]
+    knowledge_base_ids?: string[] | null
+    provider?: string
+    model?: string
+  },
 ): StreamControl {
   const controller = new AbortController()
   const effectiveThreadId = threadId ?? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
@@ -98,11 +113,12 @@ export function streamChat(
     onDone()
   }
 
-  fetch(`${API_BASE}/agent/chat/stream`, {
+  apiFetch(`${API_BASE}/agent/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(lang ? { 'Accept-Language': lang } : {}),
+      ...(getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken() } : {}),
     },
     body: JSON.stringify({
       message,
@@ -110,6 +126,13 @@ export function streamChat(
       agent_id: agentId,
       source,
       lang,
+      attachments: extras?.attachments ?? [],
+      attachment_ids: extras?.attachment_ids ?? [],
+      ...(extras?.knowledge_base_ids !== undefined
+        ? { knowledge_base_ids: extras.knowledge_base_ids }
+        : {}),
+      provider: extras?.provider,
+      model: extras?.model,
     }),
     signal: controller.signal,
   }).then(async (res) => {

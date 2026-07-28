@@ -1,9 +1,25 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Activity, Bot, Database, Drill, FileText, Gauge, ListTodo, LogOut, Settings, ShieldAlert } from 'lucide-react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import {
+  Activity,
+  BookOpen,
+  Bot,
+  ListTodo,
+  LogOut,
+  Menu,
+  MessageSquare,
+  Settings,
+  ShieldAlert,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import ChatPanel from './components/ChatPanel'
+import ModelSelector, { type ModelSelection } from './components/ModelSelector'
+import RunMetricsCard from './components/RunMetricsCard'
+import type { RunMetricsSummary } from './services/api'
 import TaskMonitor from './components/TaskMonitor'
 import SidePanel from './components/SidePanel'
 import AgentSwitcher from './components/AgentSwitcher'
+import AgentWorkspacePage from './components/AgentWorkspacePage'
 import ConsoleModal from './components/ConsoleModal'
 import ApprovalCard from './components/ApprovalCard'
 import SkillsManager from './components/SkillsManager'
@@ -12,92 +28,101 @@ import CronManager from './components/CronManager'
 import PluginsManager from './components/PluginsManager'
 import McpManager from './components/McpManager'
 import ChannelsManager from './components/ChannelsManager'
+import MemoryManager from './components/MemoryManager'
+import MemoryContextCard from './components/MemoryContextCard'
+import KnowledgeBasePage from './components/KnowledgeBasePage'
+import TeamPermissionsPage from './components/TeamPermissionsPage'
 import {
   cancelTask,
-  deleteDailyReport,
-  deleteDrillingParam,
-  deleteLasFile,
-  deleteWell,
-  deleteWellSection,
-  deleteAgent,
   archiveChatSession,
-  deleteArtifact,
   deleteChatSession,
   exportChatSession,
   unarchiveChatSession,
   fetchApprovalHistory,
-  fetchAgent,
-  fetchAgentFiles,
-  fetchAgentHistory,
-  fetchAgents,
-  fetchArtifacts,
   fetchConsoleAuthStatus,
+  fetchAuthMe,
   fetchChatSession,
   fetchChatSessions,
-  fetchDailyReports,
-  fetchDrillingParams,
   fetchGuardConfig,
-  fetchLasFiles,
+  fetchStats,
   fetchTask,
+  fetchTaskAttempts,
+  fetchTaskEvents,
   fetchTraceTimeline,
-  fetchWell,
-  fetchWells,
-  fetchWellSections,
-  importLasFile,
   loginConsole,
   logoutConsole,
-  uploadLasFile,
-  updateDailyReport,
-  updateDrillingParam,
+  bootstrapOwner,
+  hasPermission,
+  requeueTask,
   runTask,
-  createDailyReport,
-  createDrillingParam,
-  createWell,
-  createWellSection,
-  updateLasFile,
-  updateWell,
-  updateWellSection,
   updateGuardConfig,
-  type AgentFileInfo,
-  type AgentHistoryItem,
-  type AgentInfo,
   type ApprovalRequest,
-  type ArtifactInfo,
   type ChatMessage,
   type ChatSessionDetail,
   type ChatSessionSummary,
   type ConsoleAuthStatus,
-  type DailyReport,
-  type DrillingParam,
-  type LasFile,
+  type AuthUser,
   type Task,
   type TraceTimeline,
-  type Well,
-  type WellboreSection,
+  type MemoryContextSummary,
 } from './services/api'
 import './App.css'
 
-type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security'
+type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security' | 'memory' | 'team'
 
 interface AppRoute {
-  page: 'chat' | 'tasks' | 'agents' | 'trace' | 'settings' | 'wells' | 'reports' | 'params' | 'las-import' | 'artifacts' | 'not-found'
+  page: 'chat' | 'tasks' | 'agents' | 'knowledge' | 'trace' | 'settings' | 'removed' | 'not-found'
   taskId?: string
   agentId?: string
-  wellId?: string
-  filterWellId?: string
   traceId?: string
   settingsTab?: SettingsTab
+  removedPath?: string
 }
 
-const NAV_ITEMS = [
-  { path: '/chat', label: '对话', page: 'chat' },
-  { path: '/tasks', label: '任务', page: 'tasks' },
-  { path: '/agents', label: 'Agent', page: 'agents' },
-  { path: '/trace', label: '追踪', page: 'trace' },
-  { path: '/wells', label: '井数据', page: 'wells' },
-  { path: '/artifacts', label: '产物', page: 'artifacts' },
-  { path: '/settings/skills', label: '设置', page: 'settings' },
+const NAV_ITEMS: {
+  path: string
+  label: string
+  match: AppRoute['page'][]
+  icon: typeof MessageSquare
+}[] = [
+  { path: '/chat', label: '对话工作台', match: ['chat'], icon: MessageSquare },
+  { path: '/tasks', label: '运行中心', match: ['tasks', 'trace'], icon: ListTodo },
+  { path: '/agents', label: 'Agent 工作区', match: ['agents'], icon: Bot },
+  { path: '/knowledge', label: '知识库', match: ['knowledge'], icon: BookOpen },
+  { path: '/settings/skills', label: '设置', match: ['settings'], icon: Settings },
 ]
+
+function isRemovedLegacyPath(path: string): boolean {
+  if (path === '/wells' || path.startsWith('/wells/')) return true
+  if (path === '/reports' || path === '/params') return true
+  if (path === '/las/import' || path === '/artifacts') return true
+  return false
+}
+
+function routeTitle(route: AppRoute): string {
+  switch (route.page) {
+    case 'chat':
+      return '对话工作台'
+    case 'tasks':
+      return route.taskId ? `任务 ${route.taskId}` : '运行中心'
+    case 'agents':
+      return 'Agent 工作区'
+    case 'knowledge':
+      return '知识库'
+    case 'trace':
+      return route.traceId ? `Trace ${route.traceId.slice(0, 8)}` : '追踪'
+    case 'settings':
+      return '设置'
+    case 'removed':
+      return '页面已移除'
+    default:
+      return '页面不存在'
+  }
+}
+
+function isNavActive(match: AppRoute['page'][], page: AppRoute['page']) {
+  return match.includes(page)
+}
 
 function stripUiBase(pathname: string) {
   if (pathname === '/ui') return '/'
@@ -112,9 +137,8 @@ function currentBasePath() {
 }
 
 function parseRoute(pathname = window.location.pathname): AppRoute {
-  const [rawPath, query = ''] = pathname.split('?', 2)
-  const path = stripUiBase(rawPath).replace(/\/+$/, '') || '/'
-  const filterWellId = new URLSearchParams(query || window.location.search).get('well_id') || undefined
+  const path = stripUiBase(pathname.split('?', 2)[0]).replace(/\/+$/, '') || '/'
+  if (isRemovedLegacyPath(path)) return { page: 'removed', removedPath: path }
   if (path === '/' || path === '/chat') return { page: 'chat' }
   if (path === '/tasks') return { page: 'tasks' }
   if (path.startsWith('/tasks/')) {
@@ -124,22 +148,15 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   if (path.startsWith('/agents/')) {
     return { page: 'agents', agentId: decodeURIComponent(path.slice('/agents/'.length)) }
   }
+  if (path === '/knowledge') return { page: 'knowledge' }
   if (path === '/trace') return { page: 'trace' }
   if (path.startsWith('/trace/')) {
     return { page: 'trace', traceId: decodeURIComponent(path.slice('/trace/'.length)) }
   }
-  if (path === '/wells') return { page: 'wells' }
-  if (path.startsWith('/wells/')) {
-    return { page: 'wells', wellId: decodeURIComponent(path.slice('/wells/'.length)) }
-  }
-  if (path === '/reports') return { page: 'reports', filterWellId }
-  if (path === '/params') return { page: 'params', filterWellId }
-  if (path === '/las/import') return { page: 'las-import', filterWellId }
-  if (path === '/artifacts') return { page: 'artifacts', filterWellId }
   if (path === '/settings') return { page: 'settings', settingsTab: 'skills' }
   if (path.startsWith('/settings/')) {
     const raw = path.slice('/settings/'.length)
-    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security']
+    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security', 'memory', 'team']
     return {
       page: 'settings',
       settingsTab: allowed.includes(raw as SettingsTab) ? raw as SettingsTab : 'skills',
@@ -147,6 +164,8 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   }
   return { page: 'not-found' }
 }
+
+export { parseRoute, isRemovedLegacyPath }
 
 export default function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseRoute())
@@ -159,6 +178,28 @@ export default function App() {
   const [historyVersion, setHistoryVersion] = useState(0)
   const [authStatus, setAuthStatus] = useState<ConsoleAuthStatus | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [navOpen, setNavOpen] = useState(false)
+  const [agentCreateTrigger, setAgentCreateTrigger] = useState(0)
+  const [chatModelSelection, setChatModelSelection] = useState<ModelSelection | null>(null)
+  const [composerAttachmentCount, setComposerAttachmentCount] = useState(0)
+  const [composerAttachments, setComposerAttachments] = useState<Array<{ kind: string }>>([])
+  const [latestRunMetrics, setLatestRunMetrics] = useState<RunMetricsSummary | null>(null)
+  const [runMetricsLoading, setRunMetricsLoading] = useState(false)
+  const [memoryContext, setMemoryContext] = useState<MemoryContextSummary | null>(null)
+
+  const handleComposerAttachmentsChange = useCallback((count: number, items: Array<{ kind: string }>) => {
+    setComposerAttachmentCount(count)
+    setComposerAttachments(items)
+  }, [])
+
+  const handleRunMetrics = useCallback((metrics: RunMetricsSummary) => {
+    setLatestRunMetrics(metrics)
+    setRunMetricsLoading(false)
+  }, [])
+
+  const handleRunStarted = useCallback(() => {
+    setRunMetricsLoading(true)
+  }, [])
 
   useEffect(() => {
     const onPopState = () => setRoute(parseRoute())
@@ -168,8 +209,23 @@ export default function App() {
 
   useEffect(() => {
     fetchConsoleAuthStatus()
-      .then(setAuthStatus)
-      .catch(() => setAuthStatus({ login_required: false, authenticated: true }))
+      .then(async status => {
+        if (status.authenticated && !status.open_mode) {
+          try {
+            const me = await fetchAuthMe()
+            setAuthStatus({
+              ...status,
+              user: me.user as ConsoleAuthStatus['user'],
+              csrf_token: me.csrf_token,
+            })
+            return
+          } catch {
+            // fall through
+          }
+        }
+        setAuthStatus(status)
+      })
+      .catch(() => setAuthStatus({ login_required: false, authenticated: true, open_mode: true }))
       .finally(() => setAuthLoading(false))
   }, [])
 
@@ -201,7 +257,7 @@ export default function App() {
     return (
       <div className="app auth-shell">
         <div className="login-card">
-          <Drill size={28} />
+          <Sparkles size={28} />
           <h1>BoetClaw</h1>
           <p>正在检查控制台登录状态...</p>
         </div>
@@ -212,8 +268,18 @@ export default function App() {
   if (authStatus?.login_required && !authStatus.authenticated) {
     return (
       <LoginPage
-        onLogin={async (password) => {
-          const next = await loginConsole(password)
+        bootstrapNeeded={Boolean(authStatus.bootstrap_needed)}
+        openMode={Boolean(authStatus.open_mode)}
+        onLogin={async (username, password) => {
+          const next = await loginConsole(password, username)
+          setAuthStatus(next)
+        }}
+        onBootstrap={async (username, password, displayName) => {
+          const next = await bootstrapOwner({
+            username,
+            password,
+            display_name: displayName,
+          })
           setAuthStatus(next)
         }}
       />
@@ -222,83 +288,193 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="logo">
-          <Drill size={24} />
-          <div>
-            <h1>BoetClaw</h1>
-            <span className="subtitle">DeepAgents 钻井智能体系统</span>
+      {navOpen && <button className="nav-backdrop" aria-label="关闭导航" onClick={() => setNavOpen(false)} />}
+      <aside className={`global-sidebar${navOpen ? ' open' : ''}`} aria-label="全局导航">
+        <div className="sidebar-brand">
+          <div className="brand-mark">
+            <Sparkles size={18} />
+            <span className="brand-name">BOETCLAW</span>
           </div>
+          <span className="brand-status" title="本地实例在线">LOCAL · ONLINE</span>
         </div>
-        <nav className="app-nav">
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.path}
-              className={routePage === item.page ? 'active' : ''}
-              onClick={() => navigate(item.path)}
-            >
-              {item.label}
-            </button>
-          ))}
+        <nav className="global-nav">
+          {NAV_ITEMS.map(item => {
+            const Icon = item.icon
+            const active = isNavActive(item.match, routePage)
+            return (
+              <button
+                key={item.path}
+                type="button"
+                className={`global-nav-item${active ? ' active' : ''}`}
+                aria-current={active ? 'page' : undefined}
+                title={item.label}
+                onClick={() => {
+                  navigate(item.path)
+                  setNavOpen(false)
+                }}
+              >
+                <Icon size={16} aria-hidden />
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </nav>
-        <div className="header-info">
-          {threadId && <span className="thread-badge">Thread: {threadId.slice(0, 8)}</span>}
-          {effectiveTraceId && (
-            <button className="trace-badge trace-link" onClick={() => navigate(`/trace/${effectiveTraceId}`)}>
-              Trace: {effectiveTraceId.slice(0, 8)}
-            </button>
+        <div className="sidebar-footer">
+          <span className="sidebar-footnote">单机 Agent 控制台</span>
+          {authStatus?.open_mode && <span className="open-mode-badge">开放模式</span>}
+          {authStatus?.deprecate_console_password && (
+            <span className="open-mode-badge">请停用 CONSOLE_PASSWORD</span>
           )}
-          <AgentSwitcher currentAgent={agentId} onSwitch={handleSwitchAgent} />
-          <button className="toolbar-btn" onClick={() => navigate('/settings/skills')}>
-            <Settings size={14} /> 设置
-          </button>
-          {authStatus?.login_required && (
+          {authStatus?.user && (
+            <div className="user-menu">
+              <div className="user-menu-name">
+                {authStatus.user.display_name || authStatus.user.username || '用户'}
+              </div>
+              <div className="user-menu-role">{authStatus.user.role || authStatus.user.actor_type}</div>
+              {hasPermission(authStatus.user, 'users:read') && (
+                <button type="button" className="sidebar-logout" onClick={() => navigate('/settings/team')}>
+                  团队与权限
+                </button>
+              )}
+            </div>
+          )}
+          {(authStatus?.login_required || authStatus?.user?.actor_type === 'user') && (
             <button
-              className="toolbar-btn"
+              type="button"
+              className="sidebar-logout"
               onClick={async () => {
                 await logoutConsole()
-                setAuthStatus({ login_required: true, authenticated: false })
+                setAuthStatus({ login_required: true, authenticated: false, bootstrap_needed: false })
               }}
             >
-              <LogOut size={14} /> 退出
+              <LogOut size={14} />
+              <span>退出登录</span>
             </button>
           )}
         </div>
-      </header>
+      </aside>
 
+      <div className="app-shell">
+        <header className="app-topbar">
+          <div className="topbar-left">
+            <button
+              type="button"
+              className="nav-toggle"
+              aria-label={navOpen ? '收起导航' : '展开导航'}
+              onClick={() => setNavOpen(v => !v)}
+            >
+              {navOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <div className="topbar-title-wrap">
+              <h1 className="topbar-title">{routeTitle(route)}</h1>
+              {routePage === 'chat' && (
+                <p className="topbar-subtitle">多模态 Agent 协作空间</p>
+              )}
+            </div>
+          </div>
+          <div className="topbar-actions">
+            {routePage === 'chat' && (
+              <ModelSelector
+                value={chatModelSelection}
+                onChange={setChatModelSelection}
+                disabled={false}
+                pendingAttachments={composerAttachments}
+              />
+            )}
+            {threadId && <span className="thread-badge">Thread: {threadId.slice(0, 8)}</span>}
+            {effectiveTraceId && (
+              <button
+                type="button"
+                className="trace-badge trace-link"
+                onClick={() => navigate(`/trace/${effectiveTraceId}`)}
+              >
+                Trace: {effectiveTraceId.slice(0, 8)}
+              </button>
+            )}
+            <AgentSwitcher currentAgent={agentId} onSwitch={handleSwitchAgent} />
+            {routePage === 'agents' && (
+              <button
+                type="button"
+                className="topbar-primary"
+                aria-label="＋ 新建 Agent"
+                onClick={() => setAgentCreateTrigger(v => v + 1)}
+              >
+                ＋ 新建 Agent
+              </button>
+            )}
+          </div>
+        </header>
+
+        <div className="app-content">
       {routePage === 'chat' && (
-        <main className="app-main">
-          <section className="main-chat">
+        <main className="chat-workspace">
+          <ChatHistoryPanel
+            onNewChat={() => {
+              setThreadId(null)
+              setRestoredMessages([])
+              setHistoryVersion(v => v + 1)
+              setActiveTraceId(null)
+              navigate('/chat')
+            }}
+            onRestore={(session) => {
+              setThreadId(session.thread_id)
+              setAgentId(session.agent_id || 'default')
+              setActiveTraceId(session.last_trace_id || null)
+              setRestoredMessages(session.messages)
+              setHistoryVersion(v => v + 1)
+              navigate('/chat')
+            }}
+          />
+          <section className="chat-main">
             <ChatPanel
               threadId={threadId}
               agentId={agentId}
               onThreadId={setThreadId}
               onTraceUpdate={(traceId) => setActiveTraceId(traceId)}
+              onRunMetrics={handleRunMetrics}
+              onRunStarted={handleRunStarted}
               initialMessages={restoredMessages}
               historyVersion={historyVersion}
+              modelSelection={chatModelSelection}
+              onComposerAttachmentsChange={handleComposerAttachmentsChange}
+              onMemoryContext={setMemoryContext}
             />
           </section>
-
-          <aside className="main-sidebar">
-            <div className="sidebar-top">
-              <div className="sidebar-stack">
-                <ChatHistoryPanel
-                  onRestore={(session) => {
-                    setThreadId(session.thread_id)
-                    setAgentId(session.agent_id || 'default')
-                    setActiveTraceId(session.last_trace_id || null)
-                    setRestoredMessages(session.messages)
-                    setHistoryVersion(v => v + 1)
-                    navigate('/chat')
-                  }}
-                />
-                <TaskMonitor onSelectTask={handleSelectTask} />
-              </div>
+          <aside className="run-context" aria-label="运行上下文">
+            <div className="context-card">
+              <div className="run-context-header">运行上下文</div>
+              <dl className="context-kv mono">
+                <div><dt>状态</dt><dd>{threadId ? 'READY' : '待命'}</dd></div>
+                <div><dt>Agent</dt><dd>{agentId}</dd></div>
+                <div><dt>模型</dt><dd>{chatModelSelection ? `${chatModelSelection.provider}/${chatModelSelection.model}` : '默认'}</dd></div>
+                <div><dt>Trace</dt><dd>{effectiveTraceId ? effectiveTraceId.slice(0, 8) : '—'}</dd></div>
+                <div><dt>附件</dt><dd>{composerAttachmentCount} 个</dd></div>
+              </dl>
             </div>
-            <div className="sidebar-bottom">
-              <ApprovalCard />
+            <MemoryContextCard summary={memoryContext} />
+            <RunMetricsCard
+              metrics={latestRunMetrics}
+              loading={runMetricsLoading}
+              modelLabel={
+                latestRunMetrics?.model && latestRunMetrics?.provider
+                  ? `${latestRunMetrics.model} · ${latestRunMetrics.provider}`
+                  : chatModelSelection?.label
+              }
+            />
+            <div className="context-card">
+              <div className="run-context-header">能力与兼容性</div>
+              <ul className="context-boundary-list">
+                <li>浏览器不支持语音时自动禁用</li>
+                <li>文件类型或大小不符时阻止发送</li>
+                <li>模型切换仅影响后续消息</li>
+                <li>文件夹保留相对路径</li>
+              </ul>
+            </div>
+            <ApprovalCard />
+            <div className="run-context-panel">
               <SidePanel activeTraceId={effectiveTraceId} />
             </div>
+            <p className="context-footnote">附件仅发送到当前 Agent 工作区</p>
           </aside>
         </main>
       )}
@@ -307,10 +483,10 @@ export default function App() {
         <main className="route-main">
           <PageHeader
             icon={<ListTodo size={18} />}
-            title={route.taskId ? `任务 ${route.taskId}` : '任务'}
+            title={route.taskId ? `任务 ${route.taskId}` : '运行中心'}
             description="查看、创建、筛选并管理 Agent 后台任务；可从任务详情重跑、取消或跳转到关联 Trace。"
           />
-          <div className="route-grid two-columns">
+          <div className="route-grid two-columns tasks-layout">
             <TaskMonitor onSelectTask={handleSelectTask} />
             {route.taskId ? (
               <TaskDetailPanel
@@ -324,29 +500,48 @@ export default function App() {
                 onClose={() => navigate('/tasks')}
               />
             ) : (
-              <SidePanel activeTraceId={effectiveTraceId} />
+              <div className="route-panel tall run-context-standalone">
+                <div className="run-context-header">Trace 预览</div>
+                <SidePanel activeTraceId={effectiveTraceId} />
+              </div>
             )}
           </div>
         </main>
       )}
 
       {routePage === 'agents' && (
-        <main className="route-main">
+        <main className="route-main agent-route-main">
           <PageHeader
             icon={<Bot size={18} />}
             title={route.agentId ? `Agent ${route.agentId}` : 'Agent 工作区'}
-            description="查看工作区详情、切换当前 Agent、删除非默认 Agent，并聚合展示该工作区技能与文件/运行状态。"
+            description="搜索、创建与管理 Agent 工作区；查看模型、技能、checkpoint 与运行状态，执行打开、归档或彻底清理。"
           />
-          <AgentsPage
+          <AgentWorkspacePage
             currentAgent={agentId}
             selectedAgentId={route.agentId ?? agentId}
+            createTrigger={agentCreateTrigger}
             onSwitch={handleSwitchAgent}
             onSelect={(id) => navigate(`/agents/${id}`)}
+            onOpenChat={(id) => {
+              handleSwitchAgent(id)
+              navigate('/chat')
+            }}
             onDeleted={(id) => {
               if (id === agentId) handleSwitchAgent('default')
               navigate('/agents/default')
             }}
           />
+        </main>
+      )}
+
+      {routePage === 'knowledge' && (
+        <main className="route-main agent-route-main">
+          <PageHeader
+            icon={<BookOpen size={18} />}
+            title="知识库"
+            description="创建长期知识库、批量上传文档、管理解析状态，并在 Agent 工作区绑定默认启用的库。"
+          />
+          <KnowledgeBasePage agentId={agentId} />
         </main>
       )}
 
@@ -366,66 +561,24 @@ export default function App() {
         </main>
       )}
 
-      {routePage === 'wells' && (
+      {routePage === 'removed' && (
         <main className="route-main">
-          <PageHeader
-            icon={<Database size={18} />}
-            title={route.wellId ? `井详情 ${route.wellId}` : '井数据'}
-            description="管理井、井段、日报、钻井参数与 LAS 文件的领域数据入口。"
-          />
-          {route.wellId ? (
-            <WellDetailPage
-              wellId={route.wellId}
-              onNavigate={navigate}
-              onDeleted={() => navigate('/wells')}
-            />
-          ) : (
-            <WellsPage onOpen={(id) => navigate(`/wells/${id}`)} onNavigate={navigate} />
-          )}
-        </main>
-      )}
-
-      {routePage === 'reports' && (
-        <main className="route-main">
-          <PageHeader
-            icon={<FileText size={18} />}
-            title="钻井日报"
-            description="按井维护日报、进尺与问题记录，供后续 Agent 生成和审查使用。"
-          />
-          <ReportsPage initialWellId={route.filterWellId ?? ''} />
-        </main>
-      )}
-
-      {routePage === 'params' && (
-        <main className="route-main">
-          <PageHeader
-            icon={<Gauge size={18} />}
-            title="钻井参数"
-            description="维护按井和井深沉淀的 WOB、RPM、ROP、扭矩、泵压等参数。"
-          />
-          <ParamsPage initialWellId={route.filterWellId ?? ''} />
-        </main>
-      )}
-
-      {routePage === 'las-import' && (
-        <main className="route-main">
-          <PageHeader
-            icon={<FileText size={18} />}
-            title="LAS 导入登记"
-            description="登记 LAS 文件路径、曲线与深度范围；实际解析与质量检查将在后续任务接入。"
-          />
-          <LasImportPage initialWellId={route.filterWellId ?? ''} />
-        </main>
-      )}
-
-      {routePage === 'artifacts' && (
-        <main className="route-main">
-          <PageHeader
-            icon={<FileText size={18} />}
-            title="产物中心"
-            description="集中查看 Agent 生成的图表和代码，支持预览、下载，并显示任务、Trace、井号关联元数据。"
-          />
-          <ArtifactsPage initialWellId={route.filterWellId ?? ''} />
+          <div className="page-state error">
+            <div className="page-state-indicator" aria-hidden />
+            <h2>页面已移除</h2>
+            <p>
+              路径 <code className="mono">{route.removedPath || '—'}</code> 对应的钻井领域模块（井、日报、参数、LAS、产物）已从产品界面移除。
+              后端 API 与历史数据仍保留以维持兼容。
+            </p>
+            <div className="page-state-actions">
+              <button type="button" className="primary-btn" onClick={() => navigate('/chat')}>
+                返回对话工作台
+              </button>
+              <button type="button" className="mgr-btn secondary" onClick={() => navigate('/agents')}>
+                打开 Agent 工作区
+              </button>
+            </div>
+          </div>
         </main>
       )}
 
@@ -434,11 +587,12 @@ export default function App() {
           <PageHeader
             icon={<Settings size={18} />}
             title="设置"
-            description="按路由进入技能、模型、调度、插件与安全入口。配置写入和审计历史将在后续子任务补齐。"
+            description="技能、模型 Provider、Cron/心跳、插件、渠道、长期记忆与 MCP 的统一配置中心。"
           />
           <SettingsPage
             tab={settingsTab}
             agentId={agentId}
+            currentUser={authStatus?.user}
             onTabChange={(tab) => navigate(`/settings/${tab}`)}
           />
         </main>
@@ -446,13 +600,18 @@ export default function App() {
 
       {routePage === 'not-found' && (
         <main className="route-main">
-          <PageHeader
-            icon={<Drill size={18} />}
-            title="页面不存在"
-            description="请选择顶部导航中的现有页面。"
-          />
+          <div className="page-state error">
+            <div className="page-state-indicator" aria-hidden />
+            <h2>页面不存在</h2>
+            <p>当前路径无法匹配已知路由。可返回对话工作台或从左侧导航进入现有页面。</p>
+            <button type="button" className="primary-btn" onClick={() => navigate('/chat')}>
+              返回对话工作台
+            </button>
+          </div>
         </main>
       )}
+        </div>
+      </div>
 
       {consoleOpen && <ConsoleModal agentId={agentId} onClose={() => setConsoleOpen(false)} />}
 
@@ -489,27 +648,47 @@ function PageHeader({
     <div className="route-header">
       <div className="route-title">
         {icon}
-        <h2>{title}</h2>
+        <span className="route-title-text">{title}</span>
       </div>
       <p>{description}</p>
     </div>
   )
 }
 
-function LoginPage({ onLogin }: { onLogin: (password: string) => Promise<void> }) {
+function LoginPage({
+  onLogin,
+  onBootstrap,
+  bootstrapNeeded = false,
+  openMode = false,
+}: {
+  onLogin: (username: string, password: string) => Promise<void>
+  onBootstrap: (username: string, password: string, displayName: string) => Promise<void>
+  bootstrapNeeded?: boolean
+  openMode?: boolean
+}) {
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const submit = async () => {
     if (!password) {
-      setError('请输入控制台密码')
+      setError(bootstrapNeeded ? '请设置初始密码' : '请输入密码')
+      return
+    }
+    if (bootstrapNeeded && !username) {
+      setError('请输入用户名')
       return
     }
     setLoading(true)
     setError('')
     try {
-      await onLogin(password)
+      if (bootstrapNeeded) {
+        await onBootstrap(username, password, displayName || username)
+      } else {
+        await onLogin(username, password)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -521,546 +700,50 @@ function LoginPage({ onLogin }: { onLogin: (password: string) => Promise<void> }
     <div className="app auth-shell">
       <div className="login-card">
         <div className="login-logo">
-          <Drill size={28} />
+          <Sparkles size={28} />
           <div>
             <h1>BoetClaw</h1>
-            <span>管理控制台登录</span>
+            <span>{bootstrapNeeded ? '创建首个 Owner' : '管理控制台登录'}</span>
           </div>
         </div>
-        <p>请输入 `CONSOLE_PASSWORD` 配置的控制台密码。</p>
+        {openMode && <p className="open-mode-badge">当前为开放模式（未启用鉴权）</p>}
+        <p>
+          {bootstrapNeeded
+            ? '空用户库首次启动：创建本地 Owner 账号后立即启用认证。'
+            : '使用用户名与密码登录；兼容仅密码的 CONSOLE_PASSWORD。'}
+        </p>
+        <input
+          type="text"
+          placeholder="用户名"
+          value={username}
+          onChange={e => setUsername(e.target.value)}
+          autoFocus
+        />
+        {bootstrapNeeded && (
+          <input
+            type="text"
+            placeholder="显示名称（可选）"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+          />
+        )}
         <input
           type="password"
-          placeholder="控制台密码"
+          placeholder={bootstrapNeeded ? '初始密码（至少 8 位）' : '密码'}
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') void submit()
           }}
-          autoFocus
         />
         {error && <div className="login-error">{error}</div>}
         <button className="primary-btn" onClick={() => void submit()} disabled={loading}>
-          {loading ? '登录中...' : '登录'}
+          {loading ? '处理中...' : bootstrapNeeded ? '创建 Owner' : '登录'}
         </button>
       </div>
     </div>
   )
 }
-
-function WellsPage({ onOpen, onNavigate }: { onOpen: (id: string) => void; onNavigate: (path: string) => void }) {
-  const [wells, setWells] = useState<Well[]>([])
-  const [form, setForm] = useState({ name: '', field: '', operator: '', location: '', status: 'planned' })
-  const [error, setError] = useState('')
-
-  const load = async () => {
-    setError('')
-    try {
-      setWells(await fetchWells())
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  useEffect(() => { void load() }, [])
-
-  const handleCreate = async () => {
-    if (!form.name.trim()) {
-      setError('井名必填')
-      return
-    }
-    setError('')
-    try {
-      await createWell(form)
-      setForm({ name: '', field: '', operator: '', location: '', status: 'planned' })
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  return (
-    <div className="domain-grid">
-      <div className="route-card task-detail-card">
-        <h3>新建井</h3>
-        <div className="mgr-form">
-          <input placeholder="井名，如 XX-1" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-          <input placeholder="区块/油田" value={form.field} onChange={e => setForm({ ...form, field: e.target.value })} />
-          <input placeholder="作业方" value={form.operator} onChange={e => setForm({ ...form, operator: e.target.value })} />
-          <input placeholder="位置" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} />
-          <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-            <option value="planned">planned</option>
-            <option value="drilling">drilling</option>
-            <option value="completed">completed</option>
-          </select>
-          {error && <div className="detail-action-error">{error}</div>}
-          <button className="mgr-btn" onClick={() => void handleCreate()}>创建井</button>
-        </div>
-      </div>
-      <div className="route-card">
-        <div className="route-card-header">
-          <span>井列表</span>
-          <div className="mgr-actions">
-            <button className="mgr-btn secondary" onClick={() => onNavigate('/reports')}>日报</button>
-            <button className="mgr-btn secondary" onClick={() => onNavigate('/params')}>参数</button>
-            <button className="mgr-btn secondary" onClick={() => onNavigate('/las/import')}>LAS</button>
-            <button className="mgr-btn secondary" onClick={() => void load()}>刷新</button>
-          </div>
-        </div>
-        <div className="route-list">
-          {wells.length === 0 && <div className="empty-hint">暂无井数据。</div>}
-          {wells.map(well => (
-            <button key={well.id} className="route-list-item" onClick={() => onOpen(well.id)}>
-              <div>
-                <strong>{well.name}</strong>
-                <p>{well.field || '—'} · {well.operator || '—'} · {well.location || '—'}</p>
-              </div>
-              <span className="pill ok">{well.status}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function WellDetailPage({
-  wellId,
-  onNavigate,
-  onDeleted,
-}: {
-  wellId: string
-  onNavigate: (path: string) => void
-  onDeleted: () => void
-}) {
-  const [well, setWell] = useState<Well | null>(null)
-  const [sections, setSections] = useState<WellboreSection[]>([])
-  const [reports, setReports] = useState<DailyReport[]>([])
-  const [params, setParams] = useState<DrillingParam[]>([])
-  const [lasFiles, setLasFiles] = useState<LasFile[]>([])
-  const [sectionForm, setSectionForm] = useState({ name: '', top_depth: '0', bottom_depth: '0', hole_size: '' })
-  const [editingSectionId, setEditingSectionId] = useState('')
-  const [wellForm, setWellForm] = useState({ name: '', field: '', operator: '', location: '', status: 'planned' })
-  const [error, setError] = useState('')
-
-  const load = async () => {
-    setError('')
-    try {
-      const [w, s, r, p, l] = await Promise.all([
-        fetchWell(wellId),
-        fetchWellSections(wellId),
-        fetchDailyReports(wellId),
-        fetchDrillingParams(wellId),
-        fetchLasFiles(wellId),
-      ])
-      setWell(w)
-      setWellForm({ name: w.name, field: w.field, operator: w.operator, location: w.location, status: w.status })
-      setSections(s)
-      setReports(r)
-      setParams(p)
-      setLasFiles(l)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  useEffect(() => { void load() }, [wellId])
-
-  const handleAddSection = async () => {
-    if (!sectionForm.name.trim()) return
-    setError('')
-    try {
-      const payload = {
-        well_id: wellId,
-        name: sectionForm.name,
-        top_depth: Number(sectionForm.top_depth),
-        bottom_depth: Number(sectionForm.bottom_depth),
-        hole_size: sectionForm.hole_size,
-      }
-      if (editingSectionId) await updateWellSection(editingSectionId, payload)
-      else await createWellSection(payload)
-      setEditingSectionId('')
-      setSectionForm({ name: '', top_depth: '0', bottom_depth: '0', hole_size: '' })
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  const handleSaveWell = async () => {
-    if (!well || !wellForm.name.trim()) return
-    setError('')
-    try {
-      setWell(await updateWell(well.id, { ...wellForm, metadata: well.metadata }))
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  const handleDeleteWell = async () => {
-    if (!well || !window.confirm(`确认删除井 ${well.name}？存在关联数据时服务端会拒绝删除。`)) return
-    setError('')
-    try {
-      await deleteWell(well.id)
-      onDeleted()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  const handleDeleteSection = async (section: WellboreSection) => {
-    if (!window.confirm(`确认删除井段 ${section.name}？`)) return
-    try {
-      await deleteWellSection(section.id)
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  return (
-    <div className="route-card task-detail-card">
-      {!well && <div className="empty-hint">加载井详情...</div>}
-      {error && <div className="detail-action-error">{error}</div>}
-      {well && (
-        <>
-          <h3>{well.name}</h3>
-          <div className="detail-meta">
-            <span className="pill ok">{well.status}</span>
-            <span>{well.field || '未设置区块'}</span>
-            <span>{well.operator || '未设置作业方'}</span>
-          </div>
-          <div className="mgr-section-title">编辑井</div>
-          <div className="mgr-form domain-inline-form">
-            <input placeholder="井名" value={wellForm.name} onChange={e => setWellForm({ ...wellForm, name: e.target.value })} />
-            <input placeholder="区块/油田" value={wellForm.field} onChange={e => setWellForm({ ...wellForm, field: e.target.value })} />
-            <input placeholder="作业方" value={wellForm.operator} onChange={e => setWellForm({ ...wellForm, operator: e.target.value })} />
-            <input placeholder="位置" value={wellForm.location} onChange={e => setWellForm({ ...wellForm, location: e.target.value })} />
-            <select value={wellForm.status} onChange={e => setWellForm({ ...wellForm, status: e.target.value })}>
-              <option value="planned">planned</option>
-              <option value="drilling">drilling</option>
-              <option value="completed">completed</option>
-            </select>
-            <button className="mgr-btn" onClick={() => void handleSaveWell()}>保存井信息</button>
-            <button className="mgr-btn danger" onClick={() => void handleDeleteWell()}>删除井</button>
-          </div>
-          <div className="stats-grid domain-stats-grid">
-            <div className="stat-card"><div className="stat-value">{sections.length}</div><div className="stat-label">井段</div></div>
-            <div className="stat-card"><div className="stat-value">{reports.length}</div><div className="stat-label">日报</div></div>
-            <div className="stat-card"><div className="stat-value">{params.length}</div><div className="stat-label">参数</div></div>
-            <div className="stat-card"><div className="stat-value">{lasFiles.length}</div><div className="stat-label">LAS</div></div>
-          </div>
-          <div className="detail-actions domain-nav-actions">
-            <button className="action-btn" onClick={() => onNavigate(`/reports?well_id=${encodeURIComponent(wellId)}`)}>查看日报</button>
-            <button className="action-btn" onClick={() => onNavigate(`/params?well_id=${encodeURIComponent(wellId)}`)}>查看参数</button>
-            <button className="action-btn" onClick={() => onNavigate(`/las/import?well_id=${encodeURIComponent(wellId)}`)}>查看 LAS</button>
-            <button className="action-btn" onClick={() => onNavigate(`/artifacts?well_id=${encodeURIComponent(wellId)}`)}>查看产物</button>
-          </div>
-
-          <div className="mgr-section-title">{editingSectionId ? '编辑井段' : '新增井段'}</div>
-          <div className="mgr-form domain-inline-form">
-            <input placeholder="井段名称" value={sectionForm.name} onChange={e => setSectionForm({ ...sectionForm, name: e.target.value })} />
-            <input placeholder="顶深" value={sectionForm.top_depth} onChange={e => setSectionForm({ ...sectionForm, top_depth: e.target.value })} />
-            <input placeholder="底深" value={sectionForm.bottom_depth} onChange={e => setSectionForm({ ...sectionForm, bottom_depth: e.target.value })} />
-            <input placeholder="井眼尺寸" value={sectionForm.hole_size} onChange={e => setSectionForm({ ...sectionForm, hole_size: e.target.value })} />
-            <button className="mgr-btn" onClick={() => void handleAddSection()}>{editingSectionId ? '保存井段' : '添加井段'}</button>
-            {editingSectionId && <button className="mgr-btn secondary" onClick={() => { setEditingSectionId(''); setSectionForm({ name: '', top_depth: '0', bottom_depth: '0', hole_size: '' }) }}>取消编辑</button>}
-          </div>
-
-          <div className="mgr-section-title">井段</div>
-          <div className="mgr-list">
-            {sections.length === 0 && <div className="empty-hint">暂无井段。</div>}
-            {sections.map(section => (
-              <div className="mgr-item" key={section.id}>
-                <div className="mgr-item-main"><p>{section.name}: {section.top_depth}-{section.bottom_depth}m {section.hole_size}</p></div>
-                <div className="mgr-actions">
-                  <button className="mgr-btn secondary" onClick={() => { setEditingSectionId(section.id); setSectionForm({ name: section.name, top_depth: String(section.top_depth), bottom_depth: String(section.bottom_depth), hole_size: section.hole_size }) }}>编辑</button>
-                  <button className="mgr-btn danger" onClick={() => void handleDeleteSection(section)}>删除</button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <DomainMiniList title="最近日报" rows={reports.slice(0, 5).map(r => `${r.report_date}: ${r.depth_start}-${r.depth_end}m ${r.summary}`)} />
-          <DomainMiniList title="最近参数" rows={params.slice(0, 5).map(p => `${p.measured_depth}m · WOB ${p.wob ?? '—'} · RPM ${p.rpm ?? '—'} · ROP ${p.rop ?? '—'}`)} />
-          <DomainMiniList title="LAS 文件" rows={lasFiles.map(l => `${l.filename}: ${l.curves.join(', ') || '未登记曲线'}`)} />
-        </>
-      )}
-    </div>
-  )
-}
-
-function ReportsPage({ initialWellId }: { initialWellId: string }) {
-  const [wells, setWells] = useState<Well[]>([])
-  const [reports, setReports] = useState<DailyReport[]>([])
-  const [filterWellId, setFilterWellId] = useState(initialWellId)
-  const [editingId, setEditingId] = useState('')
-  const [error, setError] = useState('')
-  const [form, setForm] = useState({ well_id: initialWellId, report_date: '', depth_start: '0', depth_end: '0', summary: '', issues: '' })
-  const load = async (wellId = filterWellId) => {
-    setError('')
-    try {
-      const [w, r] = await Promise.all([fetchWells(), fetchDailyReports(wellId)])
-      setWells(w)
-      setReports(r)
-      if (!form.well_id && w[0]) setForm(prev => ({ ...prev, well_id: wellId || w[0].id }))
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  useEffect(() => { void load(initialWellId) }, [initialWellId])
-  const save = async () => {
-    if (!form.well_id || !form.report_date) return
-    setError('')
-    try {
-      const payload = { ...form, depth_start: Number(form.depth_start), depth_end: Number(form.depth_end) }
-      if (editingId) await updateDailyReport(editingId, payload)
-      else await createDailyReport(payload)
-      setEditingId('')
-      setForm({ ...form, report_date: '', depth_start: '0', depth_end: '0', summary: '', issues: '' })
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  const edit = (report: DailyReport) => {
-    setEditingId(report.id)
-    setForm({ well_id: report.well_id, report_date: report.report_date, depth_start: String(report.depth_start), depth_end: String(report.depth_end), summary: report.summary, issues: report.issues })
-  }
-  const remove = async (report: DailyReport) => {
-    if (!window.confirm(`确认删除 ${report.report_date} 的日报？`)) return
-    try {
-      await deleteDailyReport(report.id)
-      if (editingId === report.id) setEditingId('')
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  return <div className="domain-grid">
-    <div className="route-card task-detail-card">
-      <h3>{editingId ? '编辑日报' : '新增日报'}</h3>
-      {wells.length === 0 && <div className="empty-hint">请先在井数据页创建井。</div>}
-      {error && <div className="detail-action-error">{error}</div>}
-      <div className="mgr-form">
-        <select value={form.well_id} onChange={e => setForm({ ...form, well_id: e.target.value })}>{wells.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
-        <input type="date" value={form.report_date} onChange={e => setForm({ ...form, report_date: e.target.value })} />
-        <input placeholder="起始井深" value={form.depth_start} onChange={e => setForm({ ...form, depth_start: e.target.value })} />
-        <input placeholder="结束井深" value={form.depth_end} onChange={e => setForm({ ...form, depth_end: e.target.value })} />
-        <textarea placeholder="日报摘要" rows={2} value={form.summary} onChange={e => setForm({ ...form, summary: e.target.value })} />
-        <textarea placeholder="问题记录" rows={2} value={form.issues} onChange={e => setForm({ ...form, issues: e.target.value })} />
-        <button className="mgr-btn" onClick={() => void save()}>{editingId ? '保存修改' : '保存日报'}</button>
-        {editingId && <button className="mgr-btn secondary" onClick={() => setEditingId('')}>取消编辑</button>}
-      </div>
-    </div>
-    <DomainEntityList
-      title="日报记录"
-      wells={wells}
-      filterWellId={filterWellId}
-      onFilter={(value) => { setFilterWellId(value); setForm(prev => ({ ...prev, well_id: value || prev.well_id })); void load(value) }}
-      rows={reports.map(report => ({ id: report.id, label: `${report.report_date} · ${report.depth_start}-${report.depth_end}m`, detail: `${report.summary || '无摘要'}${report.issues ? ` · 问题：${report.issues}` : ''}`, onEdit: () => edit(report), onDelete: () => void remove(report) }))}
-    />
-  </div>
-}
-
-function ParamsPage({ initialWellId }: { initialWellId: string }) {
-  const [wells, setWells] = useState<Well[]>([])
-  const [params, setParams] = useState<DrillingParam[]>([])
-  const [filterWellId, setFilterWellId] = useState(initialWellId)
-  const [editingId, setEditingId] = useState('')
-  const [error, setError] = useState('')
-  const [form, setForm] = useState({ well_id: initialWellId, measured_depth: '', wob: '', rpm: '', rop: '', torque: '', pump_pressure: '', flow_rate: '' })
-  const load = async (wellId = filterWellId) => {
-    setError('')
-    try {
-      const [w, p] = await Promise.all([fetchWells(), fetchDrillingParams(wellId)])
-      setWells(w)
-      setParams(p)
-      if (!form.well_id && w[0]) setForm(prev => ({ ...prev, well_id: wellId || w[0].id }))
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  useEffect(() => { void load(initialWellId) }, [initialWellId])
-  const num = (value: string) => value === '' ? null : Number(value)
-  const save = async () => {
-    if (!form.well_id || !form.measured_depth) return
-    setError('')
-    try {
-      const payload = {
-        well_id: form.well_id,
-        measured_depth: Number(form.measured_depth),
-        wob: num(form.wob),
-        rpm: num(form.rpm),
-        rop: num(form.rop),
-        torque: num(form.torque),
-        pump_pressure: num(form.pump_pressure),
-        flow_rate: num(form.flow_rate),
-      }
-      if (editingId) await updateDrillingParam(editingId, payload)
-      else await createDrillingParam(payload)
-      setEditingId('')
-      setForm({ ...form, measured_depth: '', wob: '', rpm: '', rop: '', torque: '', pump_pressure: '', flow_rate: '' })
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  const edit = (item: DrillingParam) => {
-    setEditingId(item.id)
-    setForm({ well_id: item.well_id, measured_depth: String(item.measured_depth), wob: String(item.wob ?? ''), rpm: String(item.rpm ?? ''), rop: String(item.rop ?? ''), torque: String(item.torque ?? ''), pump_pressure: String(item.pump_pressure ?? ''), flow_rate: String(item.flow_rate ?? '') })
-  }
-  const remove = async (item: DrillingParam) => {
-    if (!window.confirm(`确认删除 ${item.measured_depth}m 参数记录？`)) return
-    try {
-      await deleteDrillingParam(item.id)
-      if (editingId === item.id) setEditingId('')
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  return <div className="domain-grid">
-    <div className="route-card task-detail-card">
-      <h3>{editingId ? '编辑参数' : '新增参数'}</h3>
-      {error && <div className="detail-action-error">{error}</div>}
-      <div className="mgr-form">
-        <select value={form.well_id} onChange={e => setForm({ ...form, well_id: e.target.value })}>{wells.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
-        <input placeholder="井深" value={form.measured_depth} onChange={e => setForm({ ...form, measured_depth: e.target.value })} />
-        <input placeholder="WOB" value={form.wob} onChange={e => setForm({ ...form, wob: e.target.value })} />
-        <input placeholder="RPM" value={form.rpm} onChange={e => setForm({ ...form, rpm: e.target.value })} />
-        <input placeholder="ROP" value={form.rop} onChange={e => setForm({ ...form, rop: e.target.value })} />
-        <input placeholder="Torque" value={form.torque} onChange={e => setForm({ ...form, torque: e.target.value })} />
-        <input placeholder="Pump Pressure" value={form.pump_pressure} onChange={e => setForm({ ...form, pump_pressure: e.target.value })} />
-        <input placeholder="Flow Rate" value={form.flow_rate} onChange={e => setForm({ ...form, flow_rate: e.target.value })} />
-        <button className="mgr-btn" onClick={() => void save()}>{editingId ? '保存修改' : '保存参数'}</button>
-        {editingId && <button className="mgr-btn secondary" onClick={() => setEditingId('')}>取消编辑</button>}
-      </div>
-    </div>
-    <DomainEntityList
-      title="参数记录"
-      wells={wells}
-      filterWellId={filterWellId}
-      onFilter={(value) => { setFilterWellId(value); setForm(prev => ({ ...prev, well_id: value || prev.well_id })); void load(value) }}
-      rows={params.map(item => ({ id: item.id, label: `${item.measured_depth}m · WOB ${item.wob ?? '—'} · RPM ${item.rpm ?? '—'}`, detail: `ROP ${item.rop ?? '—'} · Torque ${item.torque ?? '—'} · Pump ${item.pump_pressure ?? '—'} · Flow ${item.flow_rate ?? '—'}`, onEdit: () => edit(item), onDelete: () => void remove(item) }))}
-    />
-  </div>
-}
-
-function LasImportPage({ initialWellId }: { initialWellId: string }) {
-  const [wells, setWells] = useState<Well[]>([])
-  const [lasFiles, setLasFiles] = useState<LasFile[]>([])
-  const [filterWellId, setFilterWellId] = useState(initialWellId)
-  const [editing, setEditing] = useState<LasFile | null>(null)
-  const [form, setForm] = useState({ well_id: initialWellId, filename: '', path: '', curves: '', depth_min: '', depth_max: '', status: 'registered' })
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [error, setError] = useState('')
-  const load = async (wellId = filterWellId) => {
-    setError('')
-    try {
-      const [w, l] = await Promise.all([fetchWells(), fetchLasFiles(wellId)])
-      setWells(w)
-      setLasFiles(l)
-      if (!form.well_id && w[0]) setForm(prev => ({ ...prev, well_id: wellId || w[0].id }))
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  useEffect(() => { void load(initialWellId) }, [initialWellId])
-  const create = async () => {
-    if (!form.well_id || !form.path) return
-    setError('')
-    try {
-      await importLasFile({ well_id: form.well_id, path: form.path, filename: form.filename || undefined })
-    } catch (e) {
-      setError(String(e))
-      return
-    }
-    setForm({ ...form, filename: '', path: '', curves: '', depth_min: '', depth_max: '', status: 'registered' })
-    await load()
-  }
-  const upload = async () => {
-    if (!form.well_id || !selectedFile) return
-    setError('')
-    try {
-      await uploadLasFile({ well_id: form.well_id, file: selectedFile, filename: form.filename || undefined })
-    } catch (e) {
-      setError(String(e))
-      return
-    }
-    setSelectedFile(null)
-    setForm({ ...form, filename: '', path: '', curves: '', depth_min: '', depth_max: '', status: 'registered' })
-    await load()
-  }
-  const startEdit = (item: LasFile) => {
-    setEditing(item)
-    setForm({ well_id: item.well_id, filename: item.filename, path: item.path, curves: item.curves.join(', '), depth_min: String(item.depth_min ?? ''), depth_max: String(item.depth_max ?? ''), status: item.status })
-  }
-  const saveEdit = async () => {
-    if (!editing) return
-    setError('')
-    try {
-      await updateLasFile(editing.id, {
-        ...editing,
-        well_id: form.well_id,
-        filename: form.filename,
-        path: form.path,
-        status: form.status,
-        curves: form.curves.split(',').map(value => value.trim()).filter(Boolean),
-        depth_min: form.depth_min === '' ? null : Number(form.depth_min),
-        depth_max: form.depth_max === '' ? null : Number(form.depth_max),
-      })
-      setEditing(null)
-      setForm({ ...form, filename: '', path: '', curves: '', depth_min: '', depth_max: '', status: 'registered' })
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  const remove = async (item: LasFile) => {
-    if (!window.confirm(`确认删除 LAS 记录 ${item.filename}？仅会清理系统托管的上传文件和曲线缓存，外部源文件会保留。`)) return
-    try {
-      await deleteLasFile(item.id)
-      if (editing?.id === item.id) setEditing(null)
-      await load()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-  return <div className="domain-grid">
-    <div className="route-card task-detail-card">
-      <h3>{editing ? '编辑 LAS 记录' : '导入 LAS'}</h3>
-      {error && <div className="detail-action-error">{error}</div>}
-      <div className="mgr-form">
-        <select value={form.well_id} onChange={e => setForm({ ...form, well_id: e.target.value })}>{wells.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
-        <input placeholder="LAS 文件名（可选）" value={form.filename} onChange={e => setForm({ ...form, filename: e.target.value })} />
-        {editing ? <>
-          <input placeholder="源路径" value={form.path} onChange={e => setForm({ ...form, path: e.target.value })} />
-          <input placeholder="曲线，逗号分隔" value={form.curves} onChange={e => setForm({ ...form, curves: e.target.value })} />
-          <input placeholder="最小深度" value={form.depth_min} onChange={e => setForm({ ...form, depth_min: e.target.value })} />
-          <input placeholder="最大深度" value={form.depth_max} onChange={e => setForm({ ...form, depth_max: e.target.value })} />
-          <input placeholder="状态" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} />
-          <button className="mgr-btn" onClick={() => void saveEdit()}>保存修改</button>
-          <button className="mgr-btn secondary" onClick={() => setEditing(null)}>取消编辑</button>
-        </> : <>
-          <input type="file" accept=".las,.LAS,.txt" onChange={e => setSelectedFile(e.target.files?.[0] || null)} />
-          <input placeholder="或填写服务器 LAS 文件路径" value={form.path} onChange={e => setForm({ ...form, path: e.target.value })} />
-          <button className="mgr-btn" disabled={!selectedFile} onClick={() => void upload()}>上传并质检</button>
-          <button className="mgr-btn secondary" disabled={!form.path} onClick={() => void create()}>按路径导入</button>
-        </>}
-      </div>
-    </div>
-    <DomainEntityList
-      title="LAS 记录"
-      wells={wells}
-      filterWellId={filterWellId}
-      onFilter={(value) => { setFilterWellId(value); setForm(prev => ({ ...prev, well_id: value || prev.well_id })); void load(value) }}
-      rows={lasFiles.map(item => {
-        const quality = item.quality || {}
-        return { id: item.id, label: `${item.filename} · ${item.status} · ${item.curves.join(', ') || '—'}`, detail: `${item.depth_min ?? '—'}-${item.depth_max ?? '—'}m · points ${quality.point_count ?? '—'} · nulls ${quality.null_count ?? '—'}`, onEdit: () => startEdit(item), onDelete: () => void remove(item) }
-      })}
-    />
-  </div>
-}
-
 function TraceTimelinePanel({ traceId }: { traceId: string | null }) {
   const [timeline, setTimeline] = useState<TraceTimeline | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1087,7 +770,7 @@ function TraceTimelinePanel({ traceId }: { traceId: string | null }) {
   useEffect(() => { void load() }, [traceId])
 
   if (!traceId) {
-    return <div className="route-card"><div className="empty-hint">暂无 Trace。请从对话、任务或产物打开关联 Trace。</div></div>
+    return <div className="route-card"><div className="empty-hint">暂无 Trace。请从对话或任务打开关联 Trace。</div></div>
   }
 
   return (
@@ -1136,194 +819,13 @@ function TraceTimelinePanel({ traceId }: { traceId: string | null }) {
   )
 }
 
-function ArtifactsPage({ initialWellId }: { initialWellId: string }) {
-  const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([])
-  const [kind, setKind] = useState('')
-  const [agentId, setAgentId] = useState('')
-  const [wellId, setWellId] = useState(initialWellId)
-  const [selected, setSelected] = useState<ArtifactInfo | null>(null)
-  const [error, setError] = useState('')
-
-  const load = async (nextKind = kind, nextAgentId = agentId, nextWellId = wellId) => {
-    setError('')
-    try {
-      const data = await fetchArtifacts(nextKind, nextWellId.trim(), nextAgentId.trim())
-      setArtifacts(data.artifacts)
-      setSelected(prev => prev && data.artifacts.some(a => a.id === prev.id) ? prev : data.artifacts[0] ?? null)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  useEffect(() => { setWellId(initialWellId); void load('', '', initialWellId) }, [initialWellId])
-
-  const handleDeleteArtifact = async (item: ArtifactInfo) => {
-    if (!window.confirm(`确认删除产物 ${item.filename}？会同时清理对应 metadata；Trace 和任务记录不会删除。`)) return
-    try {
-      await deleteArtifact(item.kind, item.filename)
-      await load(kind, agentId, wellId)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  return (
-    <div className="domain-grid artifact-grid">
-      <div className="route-card">
-        <div className="route-card-header">
-          <span>产物列表</span>
-          <button className="mgr-btn secondary" onClick={() => void load()}>刷新</button>
-        </div>
-        <div className="history-search">
-          <select value={kind} onChange={e => { setKind(e.target.value); void load(e.target.value) }}>
-            <option value="">全部</option>
-            <option value="chart">图表</option>
-            <option value="code">代码</option>
-          </select>
-          <input
-            placeholder="按井 ID 过滤"
-            value={wellId}
-            onChange={e => setWellId(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void load(kind, agentId, wellId) }}
-          />
-          <input
-            placeholder="按 Agent ID 过滤"
-            value={agentId}
-            onChange={e => setAgentId(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void load(kind, agentId) }}
-          />
-          <button className="mgr-btn secondary" onClick={() => void load(kind, agentId, wellId)}>筛选</button>
-        </div>
-        {error && <div className="detail-action-error">{error}</div>}
-        <div className="route-list">
-          {artifacts.length === 0 && <div className="empty-hint">暂无生成产物。</div>}
-          {artifacts.map(item => (
-            <button
-              key={item.id}
-              className={`route-list-item ${selected?.id === item.id ? 'active' : ''}`}
-              onClick={() => setSelected(item)}
-            >
-              <div>
-                <strong>{item.filename}</strong>
-                <p>{item.kind} · {(item.size / 1024).toFixed(1)}KB · agent {item.agent_id || '—'} · well {item.well_id || '—'}</p>
-              </div>
-              <span className="pill">{item.kind}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="route-card task-detail-card">
-        {!selected && <div className="empty-hint">选择产物查看预览。</div>}
-        {selected && (
-          <>
-            <h3>{selected.filename}</h3>
-            <div className="detail-meta">
-              <span className="pill ok">{selected.kind}</span>
-              <span>task {selected.task_id || '—'}</span>
-              <span>trace {selected.trace_id || '—'}</span>
-              <span>agent {selected.agent_id || '—'}</span>
-              <span>well {selected.well_id || '—'}</span>
-              <span>sha256 {selected.sha256 ? selected.sha256.slice(0, 12) : '—'}</span>
-            </div>
-            <div className="detail-actions">
-              <a className="action-btn primary" href={selected.download_url}>下载</a>
-              <button className="action-btn danger" onClick={() => void handleDeleteArtifact(selected)}>删除</button>
-              {selected.trace_id && (
-                <button
-                  className="action-btn"
-                  onClick={() => {
-                    window.history.pushState({}, '', `${currentBasePath()}/trace/${selected.trace_id}`)
-                    window.dispatchEvent(new PopStateEvent('popstate'))
-                  }}
-                >
-                  打开 Trace
-                </button>
-              )}
-            </div>
-            {selected.kind === 'chart' ? (
-              <div className="artifact-preview">
-                <img src={selected.url} alt={selected.filename} />
-              </div>
-            ) : (
-              <div className="detail-section">
-                <label>Code Preview</label>
-                <pre>{selected.preview || '—'}</pre>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-interface DomainEntityRow {
-  id: string
-  label: string
-  detail: string
-  onEdit: () => void
-  onDelete: () => void
-}
-
-function DomainEntityList({
-  title,
-  wells,
-  filterWellId,
-  onFilter,
-  rows,
+function ChatHistoryPanel({
+  onRestore,
+  onNewChat,
 }: {
-  title: string
-  wells: Well[]
-  filterWellId: string
-  onFilter: (wellId: string) => void
-  rows: DomainEntityRow[]
+  onRestore: (session: ChatSessionDetail) => void
+  onNewChat: () => void
 }) {
-  return (
-    <div className="route-card">
-      <div className="route-card-header">
-        <span>{title}</span>
-        <span className="pill">{rows.length}</span>
-      </div>
-      <div className="history-search domain-filter">
-        <select value={filterWellId} onChange={e => onFilter(e.target.value)}>
-          <option value="">全部井</option>
-          {wells.map(well => <option key={well.id} value={well.id}>{well.name}</option>)}
-        </select>
-      </div>
-      <div className="route-list">
-        {rows.length === 0 && <div className="empty-hint">当前筛选下暂无记录。</div>}
-        {rows.map(row => (
-          <div key={row.id} className="route-list-item">
-            <div><strong>{row.label}</strong><p>{row.detail}</p></div>
-            <div className="mgr-actions">
-              <button className="mgr-btn secondary" onClick={row.onEdit}>详情/编辑</button>
-              <button className="mgr-btn danger" onClick={row.onDelete}>删除</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function DomainMiniList({ title, rows }: { title: string; rows: string[] }) {
-  return (
-    <>
-      <div className="mgr-section-title">{title}</div>
-      <div className="mgr-list">
-        {rows.length === 0 && <div className="empty-hint">暂无{title}。</div>}
-        {rows.map((row, idx) => (
-          <div className="mgr-item" key={`${title}-${idx}`}>
-            <div className="mgr-item-main"><p>{row}</p></div>
-          </div>
-        ))}
-      </div>
-    </>
-  )
-}
-
-function ChatHistoryPanel({ onRestore }: { onRestore: (session: ChatSessionDetail) => void }) {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
   const [query, setQuery] = useState('')
   const [showArchived, setShowArchived] = useState(false)
@@ -1398,25 +900,20 @@ function ChatHistoryPanel({ onRestore }: { onRestore: (session: ChatSessionDetai
 
   return (
     <div className="chat-history-panel">
-      <div className="panel-header compact">
-        <div className="panel-title">
-          <Activity size={15} />
-          <span>会话历史</span>
-        </div>
-        <button className="icon-btn" onClick={() => void load()} title="刷新">
-          {loading ? '...' : '↻'}
-        </button>
+      <div className="history-panel-head">
+        <span className="history-panel-title">最近对话</span>
+        <button type="button" className="history-new-btn" onClick={onNewChat}>＋ 新对话</button>
       </div>
       <div className="history-search">
         <input
-          placeholder="搜索 thread / 内容"
+          placeholder="⌕  搜索对话"
           value={query}
+          aria-label="搜索对话"
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') void load(query)
           }}
         />
-        <button className="mgr-btn secondary" onClick={() => void load(query)}>搜索</button>
       </div>
       <label className="history-archived-toggle">
         <input
@@ -1432,23 +929,26 @@ function ChatHistoryPanel({ onRestore }: { onRestore: (session: ChatSessionDetai
       </label>
       {error && <div className="detail-action-error">{error}</div>}
       <div className="history-list">
-        {sessions.length === 0 && (
+        {loading && sessions.length === 0 && <div className="empty-hint">正在加载会话…</div>}
+        {!loading && sessions.length === 0 && (
           <div className="empty-hint">{showArchived ? '暂无已归档会话。' : '暂无会话记录。'}</div>
         )}
         {sessions.map(session => (
-          <div className="history-item" key={session.thread_id}>
-            <button onClick={() => void handleRestore(session.thread_id)}>
+          <div className={`history-item${session.archived ? ' archived' : ''}`} key={session.thread_id}>
+            <button type="button" className="history-item-main" onClick={() => void handleRestore(session.thread_id)}>
               <strong>{session.title || session.thread_id}</strong>
-              <span>
-                {session.thread_id.slice(0, 8)} · {session.message_count} messages
-                {session.archived ? ' · 已归档' : ''}
+              <span className="mono">
+                {session.updated_at ? new Date(session.updated_at).toLocaleString('zh-CN') : '—'}
+                {' · '}{session.message_count} 条
               </span>
             </button>
-            <button className="history-export" onClick={() => void handleExport(session.thread_id)}>导出</button>
-            <button className="history-export" onClick={() => void handleArchiveToggle(session)}>
-              {session.archived ? '取消归档' : '归档'}
-            </button>
-            <button className="history-export danger" onClick={() => void handleDelete(session)}>删除</button>
+            <div className="history-item-actions">
+              <button type="button" className="history-export" onClick={() => void handleExport(session.thread_id)}>导出</button>
+              <button type="button" className="history-export" onClick={() => void handleArchiveToggle(session)}>
+                {session.archived ? '取消归档' : '归档'}
+              </button>
+              <button type="button" className="history-export danger" onClick={() => void handleDelete(session)}>删除</button>
+            </div>
           </div>
         ))}
       </div>
@@ -1521,16 +1021,75 @@ function TaskDetailContent({
   onTrace: (traceId: string) => void
   onClose: () => void
 }) {
-  const [busy, setBusy] = useState<'run' | 'cancel' | ''>('')
+  const [busy, setBusy] = useState<'run' | 'cancel' | 'requeue' | ''>('')
   const [actionError, setActionError] = useState('')
-  const canCancel = task.status === 'pending' || task.status === 'running'
-  const canRun = task.status !== 'running'
+  const [attempts, setAttempts] = useState<Awaited<ReturnType<typeof fetchTaskAttempts>>>([])
+  const [events, setEvents] = useState<Awaited<ReturnType<typeof fetchTaskEvents>>>([])
+  const [retryCountdown, setRetryCountdown] = useState('')
+  const [confirmRerun, setConfirmRerun] = useState(false)
+
+  const canCancel = ['pending', 'queued', 'running', 'scheduled', 'retry_wait', 'leased'].includes(task.status)
+  const canRun = !['running', 'leased', 'cancelling'].includes(task.status)
+  const canRequeue = ['failed', 'dead_letter', 'interrupted'].includes(task.status)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [attemptRows, eventRows] = await Promise.all([
+          fetchTaskAttempts(task.id),
+          fetchTaskEvents(task.id),
+        ])
+        setAttempts(attemptRows)
+        setEvents(eventRows)
+      } catch {
+        setAttempts([])
+        setEvents([])
+      }
+    }
+    void load()
+  }, [task.id, task.updated_at])
+
+  useEffect(() => {
+    if (task.status !== 'retry_wait' || !task.retry_after) {
+      setRetryCountdown('')
+      return
+    }
+    const tick = () => {
+      const remain = Date.parse(task.retry_after || '') - Date.now()
+      if (remain <= 0) {
+        setRetryCountdown('即将重试')
+        return
+      }
+      const sec = Math.ceil(remain / 1000)
+      setRetryCountdown(`${sec}s 后重试`)
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [task.retry_after, task.status])
 
   const handleRun = async () => {
+    if (!confirmRerun && ['completed', 'failed', 'interrupted'].includes(task.status)) {
+      setConfirmRerun(true)
+      return
+    }
     setBusy('run')
     setActionError('')
     try {
       onTaskUpdate(await runTask(task.id))
+      setConfirmRerun(false)
+    } catch (e) {
+      setActionError(String(e))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const handleRequeue = async () => {
+    setBusy('requeue')
+    setActionError('')
+    try {
+      onTaskUpdate(await requeueTask(task.id))
     } catch (e) {
       setActionError(String(e))
     } finally {
@@ -1556,12 +1115,19 @@ function TaskDetailContent({
       <div className="detail-meta">
         <span className={`badge ${task.status}`}>{task.status}</span>
         <span>ID: {task.id}</span>
+        {task.agent_id && <span className="badge gateway">{task.agent_id}</span>}
         {task.gateway && <span className="badge gateway">{task.gateway}</span>}
       </div>
+      {retryCountdown && <div className="retry-countdown">{retryCountdown}</div>}
       <div className="detail-actions">
         <button className="action-btn primary" disabled={!canRun || !!busy} onClick={() => void handleRun()}>
-          {busy === 'run' ? '提交中...' : '重跑'}
+          {busy === 'run' ? '提交中...' : confirmRerun ? '确认重跑' : '重跑'}
         </button>
+        {canRequeue && (
+          <button className="action-btn" disabled={!!busy} onClick={() => void handleRequeue()}>
+            {busy === 'requeue' ? '入队中...' : '重新入队'}
+          </button>
+        )}
         <button className="action-btn danger" disabled={!canCancel || !!busy} onClick={() => void handleCancel()}>
           {busy === 'cancel' ? '取消中...' : '取消'}
         </button>
@@ -1572,7 +1138,16 @@ function TaskDetailContent({
         )}
         <button className="action-btn" onClick={onClose}>关闭</button>
       </div>
+      {!canRun && !canRequeue && task.status === 'completed' && (
+        <p className="empty-hint">任务已完成，重跑将创建新的执行尝试。</p>
+      )}
       {actionError && <div className="detail-action-error">{actionError}</div>}
+      {task.run_snapshot && Object.keys(task.run_snapshot).length > 0 && (
+        <div className="detail-section">
+          <label>运行快照</label>
+          <pre>{JSON.stringify(task.run_snapshot, null, 2)}</pre>
+        </div>
+      )}
       <div className="detail-section">
         <label>Prompt</label>
         <pre>{task.prompt}</pre>
@@ -1589,254 +1164,159 @@ function TaskDetailContent({
           <pre>{task.error}</pre>
         </div>
       )}
+      {attempts.length > 0 && (
+        <div className="detail-section">
+          <label>执行尝试 ({attempts.length})</label>
+          <div className="attempt-timeline">
+            {attempts.map(attempt => (
+              <div key={attempt.id} className="timeline-item">
+                <strong>#{attempt.attempt_number}</strong> {attempt.status}
+                {attempt.duration_ms ? ` · ${attempt.duration_ms}ms` : ''}
+                {attempt.error_summary ? ` · ${attempt.error_summary}` : ''}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {events.length > 0 && (
+        <div className="detail-section">
+          <label>状态时间线</label>
+          <div className="event-timeline">
+            {events.map(event => (
+              <div key={event.id} className="timeline-item">
+                {new Date(event.created_at).toLocaleString('zh-CN')} · {event.event_type}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="detail-section">
         <label>时间</label>
-        <pre>{`created: ${new Date(task.created_at).toLocaleString('zh-CN')}\nupdated: ${new Date(task.updated_at).toLocaleString('zh-CN')}`}</pre>
+        <pre>{`created: ${new Date(task.created_at).toLocaleString('zh-CN')}\nupdated: ${new Date(task.updated_at).toLocaleString('zh-CN')}${task.scheduled_at ? `\nscheduled: ${new Date(task.scheduled_at).toLocaleString('zh-CN')}` : ''}`}</pre>
       </div>
     </>
   )
 }
-
-function AgentsPage({
-  currentAgent,
-  selectedAgentId,
-  onSwitch,
-  onSelect,
-  onDeleted,
-}: {
-  currentAgent: string
-  selectedAgentId: string
-  onSwitch: (agentId: string) => void
-  onSelect: (agentId: string) => void
-  onDeleted: (agentId: string) => void
-}) {
-  const [agents, setAgents] = useState<AgentInfo[]>([])
-  const [selected, setSelected] = useState<AgentInfo | null>(null)
-  const [agentFiles, setAgentFiles] = useState<AgentFileInfo[]>([])
-  const [agentHistory, setAgentHistory] = useState<AgentHistoryItem[]>([])
-  const [loading, setLoading] = useState(false)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  const loadAgents = async () => {
-    setLoading(true)
-    try {
-      const data = await fetchAgents()
-      setAgents(data.agents)
-    } catch {
-      setAgents([])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    void loadAgents()
-  }, [])
-
-  useEffect(() => {
-    const loadDetail = async () => {
-      setDetailLoading(true)
-      setError('')
-      try {
-        const [detail, files, history] = await Promise.all([
-          fetchAgent(selectedAgentId),
-          fetchAgentFiles(selectedAgentId),
-          fetchAgentHistory(selectedAgentId),
-        ])
-        setSelected(detail)
-        setAgentFiles(files.files)
-        setAgentHistory(history.history)
-      } catch (e) {
-        setSelected(null)
-        setAgentFiles([])
-        setAgentHistory([])
-        setError(String(e))
-      } finally {
-        setDetailLoading(false)
-      }
-    }
-    void loadDetail()
-  }, [selectedAgentId])
-
-  const handleDelete = async () => {
-    if (!selected || selected.agent_id === 'default') return
-    const proceed = window.confirm(
-      `确认删除 Agent「${selected.agent_id}」？\n下一步将选择：仅注销 或 彻底清除。`,
-    )
-    if (!proceed) return
-    const purge = window.confirm(
-      `选择删除方式：\n\n确定 = 彻底清除（删除工作区目录与 checkpoint，不可恢复）\n取消 = 仅注销（写 tombstone，保留磁盘与 checkpoint，列表不可见）`,
-    )
-    setError('')
-    try {
-      await deleteAgent(selected.agent_id, { purge })
-      await loadAgents()
-      onDeleted(selected.agent_id)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  return (
-    <div className="agent-workspace-grid">
-      <div className="route-card">
-        <div className="route-card-header">
-          <span>工作区列表</span>
-          <AgentSwitcher currentAgent={currentAgent} onSwitch={onSwitch} />
-        </div>
-        <div className="route-list">
-          {loading && <div className="empty-hint">加载中...</div>}
-          {!loading && agents.length === 0 && <div className="empty-hint">暂无 Agent 工作区。</div>}
-          {agents.map(agent => (
-            <button
-              key={agent.agent_id}
-              className={`route-list-item ${agent.agent_id === selectedAgentId ? 'active' : ''}`}
-              onClick={() => onSelect(agent.agent_id)}
-            >
-              <div>
-                <strong>{agent.agent_id}</strong>
-                <p>{agent.root}</p>
-              </div>
-              <div className="route-list-meta">
-                <span className={`pill ${agent.loaded ? 'ok' : 'off'}`}>{agent.loaded ? '就绪' : '未载'}</span>
-                <span>{agent.skills_count} skills</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="route-card agent-detail-card">
-        <div className="route-card-header">
-          <span>工作区详情</span>
-          <div className="mgr-actions">
-            {selected && selected.agent_id !== currentAgent && (
-              <button className="mgr-btn secondary" onClick={() => onSwitch(selected.agent_id)}>设为当前</button>
-            )}
-            <button
-              className="mgr-btn danger"
-              disabled={!selected || selected.agent_id === 'default'}
-              onClick={() => void handleDelete()}
-            >
-              删除
-            </button>
-          </div>
-        </div>
-        <div className="settings-body">
-          {detailLoading && <div className="empty-hint">加载详情...</div>}
-          {error && <div className="empty-hint error-text">{error}</div>}
-          {!detailLoading && selected && (
-            <div className="agent-detail">
-              <div className="agent-summary-grid">
-                <div className="stat-card">
-                  <div className="stat-value">{selected.loaded ? 'Ready' : 'Idle'}</div>
-                  <div className="stat-label">运行时</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-value">{selected.skills_count}</div>
-                  <div className="stat-label">技能数</div>
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <label>Workspace</label>
-                <pre>{selected.root}</pre>
-              </div>
-              <div className="detail-section">
-                <label>Files Root</label>
-                <pre>{`${selected.root}${selected.root.endsWith('/') || selected.root.endsWith('\\') ? '' : '/'}files`}</pre>
-              </div>
-              <div className="detail-section">
-                <label>Created At</label>
-                <pre>{new Date(selected.created_at).toLocaleString('zh-CN')}</pre>
-              </div>
-              <div className="detail-section">
-                <label>Config</label>
-                <pre>{JSON.stringify(selected.config, null, 2)}</pre>
-              </div>
-
-              <div className="mgr-section-title">工作区技能聚合</div>
-              <SkillsManager agentId={selected.agent_id} />
-
-              <div className="mgr-section-title">运行历史与文件索引</div>
-              <div className="agent-index-grid">
-                <div className="mgr-list">
-                  <div className="mgr-section-title">运行历史</div>
-                  {agentHistory.length === 0 && <div className="empty-hint">暂无该 Agent 的任务或会话历史。</div>}
-                  {agentHistory.map(item => (
-                    <div className="mgr-item" key={`${item.type}-${item.id}`}>
-                      <div className="mgr-item-main">
-                        <h4>{item.type} · {item.title}</h4>
-                        <p>{item.status} · thread {item.thread_id || '—'} · trace {item.trace_id || '—'}</p>
-                        <p>{item.match_source} · {item.updated_at || '—'}</p>
-                      </div>
-                      <span className="pill">{item.type}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mgr-list">
-                  <div className="mgr-section-title">文件索引</div>
-                  {agentFiles.length === 0 && <div className="empty-hint">files 目录暂无文件。</div>}
-                  {agentFiles.map(file => (
-                    <div className="mgr-item" key={file.path}>
-                      <div className="mgr-item-main">
-                        <h4>{file.path}</h4>
-                        <p>{(file.size / 1024).toFixed(1)} KB · {new Date(file.modified_at).toLocaleString('zh-CN')}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function SettingsPage({
   tab,
   agentId,
+  currentUser,
   onTabChange,
 }: {
   tab: SettingsTab
   agentId: string
+  currentUser?: AuthUser | null
   onTabChange: (tab: SettingsTab) => void
 }) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'skills', label: '技能' },
-    { id: 'providers', label: '模型' },
-    { id: 'scheduler', label: '定时/心跳' },
+    { id: 'providers', label: '模型连接' },
+    { id: 'scheduler', label: 'Cron 与心跳' },
     { id: 'plugins', label: '插件' },
-    { id: 'mcp', label: 'MCP' },
     { id: 'channels', label: '渠道' },
+    { id: 'mcp', label: 'MCP' },
+    { id: 'memory', label: '长期记忆' },
     { id: 'security', label: '安全' },
+    { id: 'team', label: '团队与权限' },
   ]
 
+  const active = tabs.find(item => item.id === tab) ?? tabs[0]
+  const [health, setHealth] = useState<{ ok: boolean; events: number; tasks: number; error: string }>({
+    ok: false,
+    events: 0,
+    tasks: 0,
+    error: '',
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    fetchStats()
+      .then(stats => {
+        if (cancelled) return
+        const taskTotal = Object.values(stats.tasks || {}).reduce((sum, n) => sum + n, 0)
+        setHealth({ ok: true, events: stats.trace_events, tasks: taskTotal, error: '' })
+      })
+      .catch(e => {
+        if (cancelled) return
+        setHealth({ ok: false, events: 0, tasks: 0, error: e instanceof Error ? e.message : String(e) })
+      })
+    return () => { cancelled = true }
+  }, [tab])
+
   return (
-    <div className="route-card">
-      <div className="settings-tabs">
+    <div className="settings-workspace">
+      <aside className="settings-nav" aria-label="配置中心">
+        <div className="settings-nav-title">配置中心</div>
         {tabs.map(item => (
           <button
             key={item.id}
+            type="button"
             className={tab === item.id ? 'active' : ''}
             onClick={() => onTabChange(item.id)}
           >
             {item.label}
           </button>
         ))}
-      </div>
-      <div className="settings-body">
-        {tab === 'skills' && <SkillsManager agentId={agentId} />}
-        {tab === 'providers' && <ProviderSettings />}
-        {tab === 'scheduler' && <CronManager />}
-        {tab === 'plugins' && <PluginsManager />}
-        {tab === 'mcp' && <McpManager />}
-        {tab === 'channels' && <ChannelsManager />}
-        {tab === 'security' && <SecuritySettings />}
-      </div>
+      </aside>
+      <section className="settings-form-panel route-card">
+        <div className="settings-form-header">
+          <h3>{active.label}</h3>
+          <p>配置写入本地环境；密钥不明文展示，危险操作需二次确认。</p>
+        </div>
+        <div className="settings-body">
+          {tab === 'skills' && <SkillsManager agentId={agentId} />}
+          {tab === 'providers' && <ProviderSettings />}
+          {tab === 'scheduler' && <CronManager />}
+          {tab === 'plugins' && <PluginsManager />}
+          {tab === 'mcp' && <McpManager />}
+          {tab === 'channels' && <ChannelsManager />}
+          {tab === 'memory' && <MemoryManager agentId={agentId} />}
+          {tab === 'security' && <SecuritySettings />}
+          {tab === 'team' && <TeamPermissionsPage currentUser={currentUser} />}
+        </div>
+      </section>
+      <aside className="settings-side">
+        <div className="route-card settings-health">
+          <div className="route-card-header"><span>运行健康</span></div>
+          <div className="health-list">
+            <div>
+              <span>API 服务</span>
+              <span className={`status-text ${health.ok ? 'success' : 'warning'}`}>
+                {health.ok ? '正常' : (health.error ? '异常' : '检查中')}
+              </span>
+            </div>
+            <div>
+              <span>Trace 事件</span>
+              <span className="status-text info mono">{health.ok ? health.events : '—'}</span>
+            </div>
+            <div>
+              <span>任务总量</span>
+              <span className="status-text info mono">{health.ok ? health.tasks : '—'}</span>
+            </div>
+            <div>
+              <span>监控接口</span>
+              <span className={`status-text ${health.ok ? 'success' : 'warning'}`}>
+                {health.ok ? '已连通' : (health.error || '未连通')}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="route-card settings-danger">
+          <div className="route-card-header"><span className="danger-title">危险操作</span></div>
+          <p id="settings-clear-local-data-desc">
+            清理本地运行数据将删除会话、Trace 与 checkpoint，且不可撤销。当前版本暂未开放此功能，请通过运维流程处理。
+          </p>
+          <button
+            type="button"
+            className="mgr-btn danger"
+            disabled
+            aria-label="清理本地数据，暂未开放"
+            aria-describedby="settings-clear-local-data-desc"
+          >
+            暂未开放
+          </button>
+        </div>
+      </aside>
     </div>
   )
 }
