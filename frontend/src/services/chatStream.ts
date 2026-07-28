@@ -91,6 +91,7 @@ export function streamChat(
       content_base64: string
     }>
     attachment_ids?: string[]
+    knowledge_base_ids?: string[] | null
     provider?: string
     model?: string
   },
@@ -125,6 +126,9 @@ export function streamChat(
       lang,
       attachments: extras?.attachments ?? [],
       attachment_ids: extras?.attachment_ids ?? [],
+      ...(extras?.knowledge_base_ids !== undefined
+        ? { knowledge_base_ids: extras.knowledge_base_ids }
+        : {}),
       provider: extras?.provider,
       model: extras?.model,
     }),

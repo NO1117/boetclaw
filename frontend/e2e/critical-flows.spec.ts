@@ -283,3 +283,36 @@ test.describe('persistent memory', () => {
     expect(fakeBackend.memories['mem-pending-1']?.status).toBe('active')
   })
 })
+
+test.describe('knowledge base flow', () => {
+  test('创建知识库 → 上传 → 绑定 → 对话选择 → 显示引用', async ({ page, fakeBackend }) => {
+    await page.goto('/knowledge')
+    await expect(page.getByRole('heading', { level: 1, name: '知识库' })).toBeVisible()
+    await page.getByLabel('新库名称').fill('E2E 知识库')
+    await page.getByRole('button', { name: '创建' }).click()
+    await expect(page.getByRole('heading', { level: 2, name: 'E2E 知识库' })).toBeVisible()
+
+    const kbId = Object.keys(fakeBackend.knowledgeBases)[0]
+    expect(kbId).toBeTruthy()
+
+    const uploadInput = page.locator('.knowledge-base-page input[type="file"]')
+    await uploadInput.setInputFiles({
+      name: 'fixture-kb.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('fixture kb content'),
+    })
+    await expect(page.getByText('fixture-kb.txt')).toBeVisible({ timeout: 10_000 })
+
+    await page.goto('/agents/default')
+    await page.getByRole('tab', { name: '知识库' }).click()
+    await page.getByRole('button', { name: '绑定' }).click()
+    await expect(page.getByText('解绑')).toBeVisible()
+
+    await page.goto('/chat')
+    await page.getByLabel('选择知识库').selectOption({ label: 'E2E 知识库' })
+    await sendChat(page, '查询知识库内容')
+    await expect(page.getByText(/:kb=1/)).toBeVisible()
+    await expect(page.getByText('知识库引用')).toBeVisible()
+    await expect(page.getByText('fixture-kb.txt')).toBeVisible()
+  })
+})

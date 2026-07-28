@@ -62,6 +62,7 @@ async def chat(request: Request, body: ChatRequest):
             message=body.message,
             attachments=[item.model_dump() for item in body.attachments],
             attachment_ids=body.attachment_ids,
+            knowledge_base_ids=body.knowledge_base_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
@@ -115,6 +116,7 @@ async def chat(request: Request, body: ChatRequest):
         payload["memory_context"] = prepared.memory_context
         payload["memory_candidates"] = prepared.memory_candidates
         payload["memory_actions"] = prepared.memory_actions
+        payload["knowledge_citations"] = prepared.knowledge_citations
         return ChatResponse(**payload)
     except ChatPreparationError as exc:
         raise _http_error(exc) from exc
@@ -161,6 +163,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             message=body.message,
             attachments=[item.model_dump() for item in body.attachments],
             attachment_ids=body.attachment_ids,
+            knowledge_base_ids=body.knowledge_base_ids,
             thread_id=body.thread_id,
             agent_id=body.agent_id,
             source=body.source,
@@ -242,6 +245,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                         "memory_context": prepared.memory_context,
                         "memory_candidates": prepared.memory_candidates,
                         "memory_actions": prepared.memory_actions,
+                        "knowledge_citations": prepared.knowledge_citations,
+                        "knowledge_retrieval": prepared.knowledge_retrieval_trace,
                     },
                 )
         except Exception as exc:

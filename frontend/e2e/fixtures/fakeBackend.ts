@@ -35,6 +35,9 @@ export interface FakeStore {
   lastApprovalResume: Record<string, unknown> | null
   lastCancelRun: Record<string, unknown> | null
   attachments: Record<string, Record<string, unknown>>
+  knowledgeBases: Record<string, Record<string, unknown>>
+  kbDocuments: Record<string, Record<string, unknown>>
+  kbBindings: Record<string, Array<Record<string, unknown>>>
   lastVoiceTranscription: Record<string, unknown> | null
   lastVoiceSpeech: Record<string, unknown> | null
   lastVoiceCapabilities: Record<string, unknown> | null
@@ -132,6 +135,9 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     lastApprovalResume: null,
     lastCancelRun: null,
     attachments: {},
+    knowledgeBases: {},
+    kbDocuments: {},
+    kbBindings: {},
     lastVoiceTranscription: null,
     lastVoiceSpeech: null,
     lastVoiceCapabilities: null,
@@ -169,6 +175,9 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.lastApprovalResume = null
       store.lastCancelRun = null
       store.attachments = {}
+      store.knowledgeBases = {}
+      store.kbDocuments = {}
+      store.kbBindings = {}
       store.lastVoiceTranscription = null
       store.lastVoiceSpeech = null
       store.lastVoiceCapabilities = null
@@ -425,6 +434,120 @@ export async function installFakeBackend(
       const record = store.attachments[attachmentId]
       if (!record) return json(route, { detail: 'not found' }, 404)
       return json(route, record)
+    }
+
+    const kbCollectionMatch = path.match(/\/agents\/([^/]+)\/knowledge-bases$/)
+    if (kbCollectionMatch && method === 'GET') {
+      const agentId = decodeURIComponent(kbCollectionMatch[1])
+      const rows = Object.values(store.knowledgeBases).filter(kb => kb.agent_id === agentId)
+      return json(route, { knowledge_bases: rows })
+    }
+    if (kbCollectionMatch && method === 'POST') {
+      const agentId = decodeURIComponent(kbCollectionMatch[1])
+      const body = request.postDataJSON() as Record<string, unknown>
+      const kbId = `kb-${agentId}-${Object.keys(store.knowledgeBases).length + 1}`
+      const record = {
+        knowledge_base_id: kbId,
+        agent_id: agentId,
+        name: String(body.name ?? '知识库'),
+        description: String(body.description ?? ''),
+        status: 'active',
+        document_count: 0,
+        total_size: 0,
+        revision: 1,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      }
+      store.knowledgeBases[kbId] = record
+      return json(route, record)
+    }
+    const kbItemMatch = path.match(/\/agents\/([^/]+)\/knowledge-bases\/([^/]+)$/)
+    if (kbItemMatch && method === 'GET') {
+      const kbId = decodeURIComponent(kbItemMatch[2])
+      const record = store.knowledgeBases[kbId]
+      if (!record) return json(route, { detail: 'not found' }, 404)
+      return json(route, record)
+    }
+    const kbDocsMatch = path.match(/\/agents\/([^/]+)\/knowledge-bases\/([^/]+)\/documents$/)
+    if (kbDocsMatch && method === 'GET') {
+      const kbId = decodeURIComponent(kbDocsMatch[2])
+      const docs = Object.values(store.kbDocuments).filter(d => d.knowledge_base_id === kbId)
+      return json(route, { documents: docs })
+    }
+    const kbUploadMatch = path.match(/\/agents\/([^/]+)\/knowledge-bases\/([^/]+)\/documents\/upload$/)
+    if (kbUploadMatch && method === 'POST') {
+      const agentId = decodeURIComponent(kbUploadMatch[1])
+      const kbId = decodeURIComponent(kbUploadMatch[2])
+      const docId = `doc-${kbId}-${Object.keys(store.kbDocuments).length + 1}`
+      const record = {
+        document_id: docId,
+        knowledge_base_id: kbId,
+        agent_id: agentId,
+        filename: 'fixture-kb.txt',
+        relative_path: '',
+        mime_type: 'text/plain',
+        size: 24,
+        kind: 'document',
+        status: 'ready',
+        scan_status: 'unscanned',
+        error_summary: '',
+        summary: { chunk_count: 1, searchable: true, char_count: 24 },
+        source_attachment_id: '',
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      }
+      store.kbDocuments[docId] = record
+      const kb = store.knowledgeBases[kbId]
+      if (kb) {
+        kb.document_count = Number(kb.document_count ?? 0) + 1
+        kb.total_size = Number(kb.total_size ?? 0) + 24
+      }
+      return json(route, { documents: [record] })
+    }
+    const kbPreviewMatch = path.match(/\/agents\/([^/]+)\/knowledge-bases\/([^/]+)\/documents\/([^/]+)\/preview$/)
+    if (kbPreviewMatch && method === 'GET') {
+      return json(route, {
+        text: 'fixture kb snippet preview text',
+        filename: 'fixture-kb.txt',
+        location: { section: 'p1' },
+        truncated: false,
+      })
+    }
+    const kbBindingsMatch = path.match(/\/agents\/([^/]+)\/knowledge-base-bindings$/)
+    if (kbBindingsMatch && method === 'GET') {
+      const agentId = decodeURIComponent(kbBindingsMatch[1])
+      return json(route, { bindings: store.kbBindings[agentId] ?? [] })
+    }
+    const kbBindItemMatch = path.match(/\/agents\/([^/]+)\/knowledge-base-bindings\/([^/]+)$/)
+    if (kbBindItemMatch && method === 'POST') {
+      const agentId = decodeURIComponent(kbBindItemMatch[1])
+      const kbId = decodeURIComponent(kbBindItemMatch[2])
+      const body = request.postDataJSON() as Record<string, unknown>
+      const binding = {
+        knowledge_base_id: kbId,
+        enabled_by_default: body.enabled_by_default !== false,
+        bound_at: nowIso(),
+      }
+      store.kbBindings[agentId] = [...(store.kbBindings[agentId] ?? []).filter(b => b.knowledge_base_id !== kbId), binding]
+      return json(route, binding)
+    }
+    if (kbBindItemMatch && method === 'PATCH') {
+      const agentId = decodeURIComponent(kbBindItemMatch[1])
+      const kbId = decodeURIComponent(kbBindItemMatch[2])
+      const body = request.postDataJSON() as Record<string, unknown>
+      store.kbBindings[agentId] = (store.kbBindings[agentId] ?? []).map(b =>
+        b.knowledge_base_id === kbId
+          ? { ...b, enabled_by_default: body.enabled_by_default !== false }
+          : b,
+      )
+      const binding = (store.kbBindings[agentId] ?? []).find(b => b.knowledge_base_id === kbId)
+      return json(route, binding ?? { knowledge_base_id: kbId, enabled_by_default: true, bound_at: nowIso() })
+    }
+    if (kbBindItemMatch && method === 'DELETE') {
+      const agentId = decodeURIComponent(kbBindItemMatch[1])
+      const kbId = decodeURIComponent(kbBindItemMatch[2])
+      store.kbBindings[agentId] = (store.kbBindings[agentId] ?? []).filter(b => b.knowledge_base_id !== kbId)
+      return json(route, { unbound: true, knowledge_base_id: kbId })
     }
     const agentMatch = path.match(/\/agents\/([^/]+)$/)
     if (agentMatch && method === 'GET') {
@@ -755,12 +878,14 @@ export async function installFakeBackend(
       const message = String(body.message ?? '')
       const attachmentCount = Array.isArray(body.attachments) ? body.attachments.length : 0
       const attachmentIdCount = Array.isArray(body.attachment_ids) ? body.attachment_ids.length : 0
+      const kbIdCount = Array.isArray(body.knowledge_base_ids) ? body.knowledge_base_ids.length : 0
       const attachmentSuffix =
         attachmentIdCount > 0
           ? `:attachment_ids=${attachmentIdCount}`
           : attachmentCount > 0
             ? `:attachments=${attachmentCount}`
             : ''
+      const kbSuffix = kbIdCount > 0 ? `:kb=${kbIdCount}` : ''
       const mode: StreamMode =
         message.startsWith('/plan')
           ? 'plan'
@@ -805,8 +930,22 @@ export async function installFakeBackend(
         cost_is_estimate: attachmentIdCount > 0,
         graph_cache_hit: true,
         attachment_count: attachmentIdCount || attachmentCount,
-        retrieval_hits: attachmentIdCount > 0 ? 6 : 0,
+        retrieval_hits: attachmentIdCount > 0 ? 6 : kbIdCount > 0 ? 2 : 0,
       }
+
+      const knowledgeCitations = kbIdCount > 0
+        ? [{
+            knowledge_base_id: String((body.knowledge_base_ids as string[])[0]),
+            knowledge_base_name: 'E2E 知识库',
+            document_id: 'doc-e2e',
+            document_name: 'fixture-kb.txt',
+            chunk_id: 'doc-e2e-c0000',
+            location: { section: 'p1' },
+            score: 1,
+            truncated: false,
+            snippet: 'fixture kb snippet',
+          }]
+        : []
 
       const memoryContext = {
         mode: 'review',
@@ -941,14 +1080,15 @@ export async function installFakeBackend(
           {
             ...base,
             event: 'update',
-            data: { data: { type: 'message', content: `echo:${agentId}:${message}${attachmentSuffix}` } },
+            data: { data: { type: 'message', content: `echo:${agentId}:${message}${attachmentSuffix}${kbSuffix}` } },
           },
           { ...base, event: 'done', data: {
-            response: `echo:${agentId}:${message}${attachmentSuffix}`,
+            response: `echo:${agentId}:${message}${attachmentSuffix}${kbSuffix}`,
             run_metrics: runMetrics,
             memory_context: memoryContext,
             memory_candidates: memoryCandidates,
             memory_actions: memoryActions,
+            knowledge_citations: knowledgeCitations,
           } },
         ]),
       })

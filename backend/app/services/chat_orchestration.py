@@ -28,6 +28,8 @@ from app.services.chat_attachments import (
     prepare_attachment_content,
 )
 from app.services.attachments.resolver import ResolvedAttachmentContent, resolve_attachment_ids_for_chat
+from app.services.knowledge_base.resolver import resolve_knowledge_for_chat
+from app.services.knowledge_base.service import KnowledgeBaseServiceError
 from app.services.run_registry import run_registry
 
 
@@ -61,6 +63,8 @@ class PreparedChat:
     attachment_summaries: list[AttachmentSummary]
     attachment_refs: list[dict[str, Any]]
     retrieval_hits: int = 0
+    knowledge_citations: list[dict[str, Any]] = field(default_factory=list)
+    knowledge_retrieval_trace: dict[str, Any] = field(default_factory=dict)
     provider_override: str | None = None
     model_override: str | None = None
     model_string: str | None = None
@@ -130,6 +134,7 @@ async def prepare_chat(
     message: str,
     attachments: list[dict[str, Any]] | None,
     attachment_ids: list[str] | None = None,
+    knowledge_base_ids: list[str] | None = None,
     thread_id: str | None,
     agent_id: str | None,
     source: str | None,
@@ -187,12 +192,65 @@ async def prepare_chat(
     except AttachmentValidationError as exc:
         raise ChatPreparationError(str(exc), exc.status_code) from exc
 
+    from app.core.config import settings as app_settings
+
+    attachment_chunk_budget = app_settings.attachment_retrieval_max_chunks
+    attachment_char_budget = app_settings.attachment_retrieval_max_chars
+    attachment_chars_used = 0
+    if isinstance(resolved.retrieval_trace, dict):
+        attachment_chars_used = int(resolved.retrieval_trace.get("total_chars", 0) or 0)
+    attachment_hits = int((resolved.retrieval_trace or {}).get("hits", 0) or 0)
+    remaining_chunks = max(0, attachment_chunk_budget - attachment_hits)
+    remaining_chars = max(0, attachment_char_budget - attachment_chars_used)
+
+    knowledge_citations: list[dict] = []
+    knowledge_trace: dict = {}
+    kb_injection_text = ""
+    try:
+        kb_result = resolve_knowledge_for_chat(
+            agent_id=resolved_agent_id,
+            message=message,
+            knowledge_base_ids=knowledge_base_ids,
+            trace_id=trace_id,
+            remaining_chunks=remaining_chunks,
+            remaining_chars=remaining_chars,
+        )
+        kb_injection_text = kb_result.text_block
+        knowledge_citations = [c.model_dump() for c in kb_result.citations]
+        knowledge_trace = kb_result.retrieval_trace
+    except KnowledgeBaseServiceError as exc:
+        raise ChatPreparationError(str(exc), exc.status_code) from exc
+
+    effective_user_content = resolved.user_content
+    if kb_injection_text:
+        if isinstance(effective_user_content, str):
+            effective_user_content = f"{effective_user_content}\n\n{kb_injection_text}".strip()
+        elif isinstance(effective_user_content, list):
+            blocks = list(effective_user_content)
+            if blocks and blocks[0].get("type") == "text":
+                blocks[0] = {
+                    "type": "text",
+                    "text": f"{blocks[0].get('text', '')}\n\n{kb_injection_text}".strip(),
+                }
+            else:
+                blocks.insert(0, {"type": "text", "text": kb_injection_text})
+            effective_user_content = blocks
+
+    resolved = ResolvedAttachmentContent(
+        user_content=effective_user_content,
+        history_text=resolved.history_text,
+        summaries=resolved.summaries,
+        has_images=resolved.has_images,
+        attachment_refs=resolved.attachment_refs,
+        retrieval_trace=resolved.retrieval_trace,
+    )
+
     image_count = sum(1 for s in resolved.summaries if getattr(s, "kind", "") == "image")
     if not image_count and resolved.has_images:
         image_count = 1
     document_count = sum(1 for s in resolved.summaries if getattr(s, "kind", "") in {"text", "document"})
     attachment_count = len(resolved.summaries) or len(attachment_ids or []) or len(attachment_inputs)
-    retrieval_hits = int((resolved.retrieval_trace or {}).get("hits", 0) or 0)
+    retrieval_hits = attachment_hits + int(knowledge_trace.get("hits", 0) or 0)
 
     effective_provider = provider_override
     effective_model = model_override
@@ -274,6 +332,8 @@ async def prepare_chat(
         attachment_summaries=resolved.summaries,
         attachment_refs=list(resolved.attachment_refs),
         retrieval_hits=retrieval_hits,
+        knowledge_citations=knowledge_citations,
+        knowledge_retrieval_trace=knowledge_trace,
         provider_override=provider_override,
         model_override=model_override,
         model_string=model_string,

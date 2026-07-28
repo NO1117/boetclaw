@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Activity,
+  BookOpen,
   Bot,
   ListTodo,
   LogOut,
@@ -29,6 +30,7 @@ import McpManager from './components/McpManager'
 import ChannelsManager from './components/ChannelsManager'
 import MemoryManager from './components/MemoryManager'
 import MemoryContextCard from './components/MemoryContextCard'
+import KnowledgeBasePage from './components/KnowledgeBasePage'
 import {
   cancelTask,
   archiveChatSession,
@@ -61,7 +63,7 @@ import './App.css'
 type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security' | 'memory'
 
 interface AppRoute {
-  page: 'chat' | 'tasks' | 'agents' | 'trace' | 'settings' | 'removed' | 'not-found'
+  page: 'chat' | 'tasks' | 'agents' | 'knowledge' | 'trace' | 'settings' | 'removed' | 'not-found'
   taskId?: string
   agentId?: string
   traceId?: string
@@ -78,6 +80,7 @@ const NAV_ITEMS: {
   { path: '/chat', label: '对话工作台', match: ['chat'], icon: MessageSquare },
   { path: '/tasks', label: '任务与追踪', match: ['tasks', 'trace'], icon: ListTodo },
   { path: '/agents', label: 'Agent 工作区', match: ['agents'], icon: Bot },
+  { path: '/knowledge', label: '知识库', match: ['knowledge'], icon: BookOpen },
   { path: '/settings/skills', label: '设置', match: ['settings'], icon: Settings },
 ]
 
@@ -96,6 +99,8 @@ function routeTitle(route: AppRoute): string {
       return route.taskId ? `任务 ${route.taskId}` : '任务与追踪'
     case 'agents':
       return 'Agent 工作区'
+    case 'knowledge':
+      return '知识库'
     case 'trace':
       return route.traceId ? `Trace ${route.traceId.slice(0, 8)}` : '追踪'
     case 'settings':
@@ -135,6 +140,7 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   if (path.startsWith('/agents/')) {
     return { page: 'agents', agentId: decodeURIComponent(path.slice('/agents/'.length)) }
   }
+  if (path === '/knowledge') return { page: 'knowledge' }
   if (path === '/trace') return { page: 'trace' }
   if (path.startsWith('/trace/')) {
     return { page: 'trace', traceId: decodeURIComponent(path.slice('/trace/'.length)) }
@@ -475,6 +481,17 @@ export default function App() {
               navigate('/agents/default')
             }}
           />
+        </main>
+      )}
+
+      {routePage === 'knowledge' && (
+        <main className="route-main agent-route-main">
+          <PageHeader
+            icon={<BookOpen size={18} />}
+            title="知识库"
+            description="创建长期知识库、批量上传文档、管理解析状态，并在 Agent 工作区绑定默认启用的库。"
+          />
+          <KnowledgeBasePage agentId={agentId} />
         </main>
       )}
 

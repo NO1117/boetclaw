@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     attachment_retrieval_max_chunks: int = 8
     attachment_retrieval_max_chars: int = 24_000
 
+    # Knowledge base
+    kb_max_documents_per_kb: int = 200
+    kb_max_total_bytes_per_kb: int = 500 * 1024 * 1024
+    kb_max_upload_batch: int = 20
+
     # Graph cache (isolated per-request agent graphs)
     graph_cache_max_size: int = 32
     graph_cache_ttl_seconds: int = 900

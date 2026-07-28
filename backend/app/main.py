@@ -20,6 +20,7 @@ from app.api.routes import (
     domain,
     files,
     gateway,
+    knowledge_bases,
     memories,
     monitor,
     plugins,
@@ -107,6 +108,7 @@ app.include_router(security.router, prefix=API_PREFIX)
 app.include_router(skills.router, prefix=API_PREFIX)
 app.include_router(agents.router, prefix=API_PREFIX)
 app.include_router(attachments.router, prefix=API_PREFIX)
+app.include_router(knowledge_bases.router, prefix=API_PREFIX)
 app.include_router(memories.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
 app.include_router(voice.router, prefix=API_PREFIX)

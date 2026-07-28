@@ -76,6 +76,8 @@ async def resolve_attachment_ids_for_chat(
     text_parts: list[str] = []
     attachment_refs: list[dict[str, Any]] = []
     total_bytes = 0
+    retrieval_hits = 0
+    retrieval_chars = 0
 
     user_text = message.strip()
     if user_text:
@@ -146,6 +148,8 @@ async def resolve_attachment_ids_for_chat(
                         detail=detail,
                     )
                 )
+                retrieval_hits += len(retrieval.chunks)
+                retrieval_chars += retrieval.total_chars
                 if trace_id:
                     emit_event(
                         EventType.MEMORY_PERSIST,
@@ -235,5 +239,8 @@ async def resolve_attachment_ids_for_chat(
         summaries=summaries,
         has_images=has_images,
         attachment_refs=attachment_refs,
-        retrieval_trace={},
+        retrieval_trace={
+            "hits": retrieval_hits,
+            "total_chars": retrieval_chars,
+        },
     )

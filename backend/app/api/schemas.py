@@ -28,6 +28,10 @@ class ChatRequest(BaseModel):
     lang: str | None = Field(None, description="Response language override, e.g. zh or en")
     provider: str | None = Field(None, description="Per-request provider override")
     model: str | None = Field(None, description="Per-request model override")
+    knowledge_base_ids: list[str] | None = Field(
+        None,
+        description="Knowledge base IDs for this chat; omit for defaults, [] to disable",
+    )
 
     @model_validator(mode="after")
     def require_message_or_attachments(self) -> "ChatRequest":
@@ -57,6 +61,7 @@ class ChatResponse(BaseModel):
     memory_context: dict[str, Any] | None = None
     memory_candidates: list[dict[str, Any]] = Field(default_factory=list)
     memory_actions: list[dict[str, Any]] = Field(default_factory=list)
+    knowledge_citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RunCancelRequest(BaseModel):

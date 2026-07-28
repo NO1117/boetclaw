@@ -65,6 +65,7 @@ export interface ChatMessage {
     attachmentId?: string
     citation?: string
   }>
+  knowledgeCitations?: KnowledgeCitationDto[]
 }
 
 export interface ChatAttachmentDto {
@@ -101,6 +102,7 @@ export interface ChatRequestOptions {
   lang?: string
   attachments?: ChatAttachmentDto[]
   attachment_ids?: string[]
+  knowledge_base_ids?: string[] | null
   provider?: string
   model?: string
 }
@@ -714,6 +716,9 @@ export async function sendChat(
       lang,
       attachments: extras?.attachments ?? [],
       attachment_ids: extras?.attachment_ids ?? [],
+      ...(extras?.knowledge_base_ids !== undefined
+        ? { knowledge_base_ids: extras.knowledge_base_ids }
+        : {}),
       provider: extras?.provider,
       model: extras?.model,
     }),
@@ -1901,6 +1906,254 @@ export async function exportMemories(agentId: string): Promise<{ agent_id: strin
 
 export async function fetchMemoryHealth(): Promise<{ health: Record<string, unknown>; metrics: Record<string, unknown> }> {
   const res = await fetch(`${API_BASE}/memories/health`, { headers: consoleAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// ----- Knowledge base -----
+
+export interface KnowledgeBaseDto {
+  knowledge_base_id: string
+  agent_id: string
+  name: string
+  description: string
+  status: 'active' | 'archived' | 'deleted'
+  document_count: number
+  total_size: number
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeDocumentDto {
+  document_id: string
+  knowledge_base_id: string
+  agent_id: string
+  filename: string
+  relative_path: string
+  mime_type: string
+  size: number
+  kind: 'text' | 'image' | 'document' | 'binary'
+  status: 'uploading' | 'uploaded' | 'parsing' | 'ready' | 'failed' | 'removed'
+  scan_status: 'unscanned' | 'clean' | 'infected' | 'error'
+  error_summary: string
+  summary: Record<string, unknown>
+  source_attachment_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeBindingDto {
+  knowledge_base_id: string
+  enabled_by_default: boolean
+  bound_at: string
+}
+
+export interface KnowledgeCitationDto {
+  knowledge_base_id: string
+  knowledge_base_name: string
+  document_id: string
+  document_name: string
+  chunk_id: string
+  location: Record<string, unknown>
+  score: number
+  truncated: boolean
+  snippet: string
+}
+
+export async function fetchKnowledgeBases(
+  agentId: string,
+  params: { status?: string; q?: string } = {},
+): Promise<{ knowledge_bases: KnowledgeBaseDto[] }> {
+  const query = new URLSearchParams()
+  if (params.status) query.set('status', params.status)
+  if (params.q) query.set('q', params.q)
+  const qs = query.toString()
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases${qs ? `?${qs}` : ''}`,
+    { headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function createKnowledgeBase(
+  agentId: string,
+  payload: { name: string; description?: string },
+): Promise<KnowledgeBaseDto> {
+  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateKnowledgeBase(
+  agentId: string,
+  kbId: string,
+  payload: { name?: string; description?: string; expected_revision?: number },
+): Promise<KnowledgeBaseDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+      body: JSON.stringify(payload),
+    },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function archiveKnowledgeBase(agentId: string, kbId: string): Promise<KnowledgeBaseDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/archive`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function restoreKnowledgeBase(agentId: string, kbId: string): Promise<KnowledgeBaseDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/restore`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteKnowledgeBase(agentId: string, kbId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}`,
+    { method: 'DELETE', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function purgeKnowledgeBase(agentId: string, kbId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/purge`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function fetchKnowledgeDocuments(
+  agentId: string,
+  kbId: string,
+): Promise<{ documents: KnowledgeDocumentDto[] }> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/documents`,
+    { headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function uploadKnowledgeDocuments(
+  agentId: string,
+  kbId: string,
+  files: File[],
+  relativePaths: string[] = [],
+): Promise<{ documents: KnowledgeDocumentDto[] }> {
+  const form = new FormData()
+  files.forEach((file, index) => {
+    form.append('files', file)
+    form.append('relative_paths', relativePaths[index] ?? file.name)
+  })
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/documents/upload`,
+    { method: 'POST', headers: consoleAuthHeaders(), body: form },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function retryKnowledgeDocument(
+  agentId: string,
+  kbId: string,
+  docId: string,
+): Promise<KnowledgeDocumentDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}/retry`,
+    { method: 'POST', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function removeKnowledgeDocument(agentId: string, kbId: string, docId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}`,
+    { method: 'DELETE', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function previewKnowledgeSnippet(
+  agentId: string,
+  kbId: string,
+  docId: string,
+  chunkId: string,
+): Promise<{ text: string; filename: string; location: Record<string, unknown>; truncated: boolean }> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}/preview?chunk_id=${encodeURIComponent(chunkId)}`,
+    { headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchKnowledgeBindings(agentId: string): Promise<{ bindings: KnowledgeBindingDto[] }> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-base-bindings`,
+    { headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function bindKnowledgeBase(
+  agentId: string,
+  kbId: string,
+  enabledByDefault = true,
+): Promise<KnowledgeBindingDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-base-bindings/${encodeURIComponent(kbId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+      body: JSON.stringify({ enabled_by_default: enabledByDefault }),
+    },
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function unbindKnowledgeBase(agentId: string, kbId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-base-bindings/${encodeURIComponent(kbId)}`,
+    { method: 'DELETE', headers: consoleAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function updateKnowledgeBinding(
+  agentId: string,
+  kbId: string,
+  enabledByDefault: boolean,
+): Promise<KnowledgeBindingDto> {
+  const res = await fetch(
+    `${API_BASE}/agents/${encodeURIComponent(agentId)}/knowledge-base-bindings/${encodeURIComponent(kbId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...consoleAuthHeaders() },
+      body: JSON.stringify({ enabled_by_default: enabledByDefault }),
+    },
+  )
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

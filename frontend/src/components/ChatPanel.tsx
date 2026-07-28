@@ -66,6 +66,13 @@ import {
   type VoicePlaybackProgress,
 } from '../utils/voiceOutput'
 import MessageVoicePlayer from './MessageVoicePlayer'
+import KnowledgeBaseSelector, {
+  knowledgeBaseIdsForRequest,
+  type KBSelectionMode,
+} from './KnowledgeBaseSelector'
+import KnowledgeCitationCard from './KnowledgeCitationCard'
+import KnowledgeSnippetPreview from './KnowledgeSnippetPreview'
+import type { KnowledgeCitationDto } from '../services/api'
 import type { VoiceCapabilities } from '../services/api'
 import './ChatPanel.css'
 import './MessageVoicePlayer.css'
@@ -113,7 +120,8 @@ function resolveStreamTerminalPayload(data: unknown): Record<string, unknown> | 
       'memory_candidates' in nested ||
       'memory_actions' in nested ||
       'response' in nested ||
-      'run_metrics' in nested
+      'run_metrics' in nested ||
+      'knowledge_citations' in nested
     )
   ) {
     return nested as Record<string, unknown>
@@ -145,6 +153,9 @@ export default function ChatPanel({
   const [useStream, setUseStream] = useState(true)
   const [planPending, setPlanPending] = useState<PlanPending | null>(null)
   const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidateDto[]>([])
+  const [kbMode, setKbMode] = useState<KBSelectionMode>('default')
+  const [kbSelectedIds, setKbSelectedIds] = useState<string[]>([])
+  const [citationPreview, setCitationPreview] = useState<KnowledgeCitationDto | null>(null)
   const applyMemoryPayload = useCallback((payload: Record<string, unknown> | null | undefined) => {
     const summary = payload?.memory_context as MemoryContextSummary | undefined
     const candidates = payload?.memory_candidates as MemoryCandidateDto[] | undefined
@@ -503,9 +514,11 @@ export default function ChatPanel({
     const lang = navigator.language
     const requestExtras = {
       attachment_ids: attachmentIds,
+      knowledge_base_ids: knowledgeBaseIdsForRequest(kbMode, kbSelectedIds),
       provider: modelSelection?.provider,
       model: modelSelection?.model,
     }
+    let pendingCitations: KnowledgeCitationDto[] = []
 
     const clearComposer = () => {
       setInput('')
@@ -562,6 +575,8 @@ export default function ChatPanel({
             if (!assistantContent && typeof terminal?.response === 'string') {
               assistantContent = terminal.response
             }
+            const citations = terminal?.knowledge_citations as KnowledgeCitationDto[] | undefined
+            if (citations?.length) pendingCitations = citations
             const runMetrics = terminal?.run_metrics as RunMetricsSummary | undefined
             if (runMetrics && onRunMetrics) onRunMetrics(runMetrics)
             applyMemoryPayload(terminal)
@@ -571,10 +586,15 @@ export default function ChatPanel({
             setMessages(prev => {
               const updated = [...prev]
               const last = updated[updated.length - 1]
+              const nextMsg: ChatMessage = {
+                role: 'assistant',
+                content: assistantContent,
+                knowledgeCitations: pendingCitations.length ? pendingCitations : last?.knowledgeCitations,
+              }
               if (last?.role === 'assistant') {
-                updated[updated.length - 1] = { ...last, content: assistantContent }
+                updated[updated.length - 1] = { ...last, ...nextMsg }
               } else {
-                updated.push({ role: 'assistant', content: assistantContent })
+                updated.push(nextMsg)
               }
               return updated
             })
@@ -605,7 +625,11 @@ export default function ChatPanel({
         onThreadId(result.thread_id)
         if (result.trace_id) onTraceUpdate(result.trace_id, result.run_id)
         if (result.response) {
-          setMessages(prev => [...prev, { role: 'assistant', content: result.response }])
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: result.response,
+            knowledgeCitations: (result as { knowledge_citations?: KnowledgeCitationDto[] }).knowledge_citations,
+          }])
         }
         if (result.interrupted && result.execution_ref?.interrupt_type === 'plan_confirm') {
           setPlanPending({ executionRef: result.execution_ref, todos: result.todos })
@@ -746,6 +770,12 @@ export default function ChatPanel({
                     </span>
                   ))}
                 </div>
+              )}
+              {msg.role === 'assistant' && msg.knowledgeCitations && msg.knowledgeCitations.length > 0 && (
+                <KnowledgeCitationCard
+                  citations={msg.knowledgeCitations}
+                  onPreview={c => setCitationPreview(c)}
+                />
               )}
               {msg.role === 'assistant' && (
                 <>
@@ -946,6 +976,15 @@ export default function ChatPanel({
             <button type="button" className="tool-btn" aria-label="添加文件夹" onClick={() => folderInputRef.current?.click()}>
               <FolderOpen size={14} /> 文件夹
             </button>
+            <KnowledgeBaseSelector
+              agentId={agentId}
+              mode={kbMode}
+              selectedIds={kbSelectedIds}
+              onChange={(mode, ids) => {
+                setKbMode(mode)
+                setKbSelectedIds(ids)
+              }}
+            />
             <button
               type="button"
               className={`tool-btn${['listening', 'recording', 'preparing'].includes(speechState) ? ' active' : ''}`}
@@ -993,6 +1032,16 @@ export default function ChatPanel({
           <p className="composer-footnote" role="status">服务端转写未配置，当前使用浏览器本地识别。</p>
         )}
       </div>
+      {citationPreview && (
+        <KnowledgeSnippetPreview
+          agentId={agentId}
+          kbId={citationPreview.knowledge_base_id}
+          docId={citationPreview.document_id}
+          chunkId={citationPreview.chunk_id}
+          title={citationPreview.document_name}
+          onClose={() => setCitationPreview(null)}
+        />
+      )}
     </div>
   )
 }
