@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from app.identity.resource_acl import require_agent_access, require_kb_access
+from app.identity.service import identity_service
 from app.services.attachments.security import AttachmentSecurityError
 from app.services.chat_attachments import MAX_FILE_BYTES
 from app.services.knowledge_base.service import KnowledgeBaseServiceError, kb_service
@@ -65,25 +67,43 @@ def _http_error(exc: Exception) -> HTTPException:
 
 
 @router.post("/{agent_id}/knowledge-bases")
-async def create_knowledge_base(agent_id: str, body: CreateKBRequest):
+async def create_knowledge_base(agent_id: str, body: CreateKBRequest, request: Request):
+    from app.identity.permissions import KB_CREATE
+    from app.identity.actor import require_permission
+
+    actor = require_permission(request, KB_CREATE)
+    require_agent_access(request, agent_id, required="editor")
     try:
         kb = kb_service.create_kb(agent_id, name=body.name, description=body.description)
+        identity_service.ensure_resource(
+            "knowledge_base",
+            kb.knowledge_base_id,
+            owner_user_id=actor.user_id if actor.is_user else "",
+            visibility="workspace",
+        )
         return kb.to_public_dict()
     except KnowledgeBaseServiceError as exc:
         raise _http_error(exc) from exc
 
 
 @router.get("/{agent_id}/knowledge-bases")
-async def list_knowledge_bases(agent_id: str, status: str = "", q: str = ""):
+async def list_knowledge_bases(agent_id: str, request: Request, status: str = "", q: str = ""):
+    from app.identity.actor import require_actor
+    from app.identity.resource_acl import can_access_kb
+
+    require_agent_access(request, agent_id, required="viewer")
+    actor = require_actor(request)
     try:
         rows = kb_service.list_kbs(agent_id, status=status or None, q=q)
-        return {"knowledge_bases": [r.to_public_dict() for r in rows]}
+        visible = [r for r in rows if can_access_kb(actor, r.knowledge_base_id, required="viewer")]
+        return {"knowledge_bases": [r.to_public_dict() for r in visible]}
     except KnowledgeBaseServiceError as exc:
         raise _http_error(exc) from exc
 
 
 @router.get("/{agent_id}/knowledge-bases/{kb_id}")
-async def get_knowledge_base(agent_id: str, kb_id: str):
+async def get_knowledge_base(agent_id: str, kb_id: str, request: Request):
+    require_kb_access(request, kb_id, required="viewer")
     try:
         kb = kb_service.get_kb(agent_id, kb_id)
         return kb.to_public_dict()
@@ -92,7 +112,8 @@ async def get_knowledge_base(agent_id: str, kb_id: str):
 
 
 @router.patch("/{agent_id}/knowledge-bases/{kb_id}")
-async def update_knowledge_base(agent_id: str, kb_id: str, body: UpdateKBRequest):
+async def update_knowledge_base(agent_id: str, kb_id: str, body: UpdateKBRequest, request: Request):
+    require_kb_access(request, kb_id, required="editor")
     try:
         kb = kb_service.update_kb(
             agent_id,

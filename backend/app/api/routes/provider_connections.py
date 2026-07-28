@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.credentials.vault import CredentialVaultError
+from app.identity.actor import require_permission
+from app.identity.permissions import PROVIDERS_CREDENTIALS, PROVIDERS_MANAGE
 from app.providers.connections.service import (
     ConnectionConflictError,
     ConnectionReferenceError,
@@ -70,17 +72,43 @@ def _http_error(exc: Exception) -> HTTPException:
 
 
 @router.get("/vault/status")
-async def vault_status():
+async def vault_status(request: Request):
+    require_permission(request, PROVIDERS_MANAGE)
     return connection_service.vault_status()
 
 
 @router.get("")
-async def list_connections(enabled_only: bool = Query(default=False)):
-    return {"connections": connection_service.list_connections(enabled_only=enabled_only)}
+async def list_connections(request: Request, enabled_only: bool = Query(default=False)):
+    from app.identity.actor import require_actor
+
+    actor = require_actor(request)
+    rows = connection_service.list_connections(enabled_only=enabled_only)
+    if actor.has(PROVIDERS_MANAGE) or actor.role in {"owner", "admin"} or actor.actor_type in {
+        "open",
+        "api_token",
+        "console_legacy",
+    }:
+        return {"connections": rows}
+    # Non-admins see redacted selectable names only
+    redacted = [
+        {
+            "id": c.get("id"),
+            "display_name": c.get("display_name"),
+            "provider_type": c.get("provider_type"),
+            "default_model": c.get("default_model"),
+            "enabled": c.get("enabled"),
+            "is_default": c.get("is_default"),
+            "credential_configured": bool(c.get("credential_configured")),
+        }
+        for c in rows
+        if c.get("enabled", True)
+    ]
+    return {"connections": redacted}
 
 
 @router.post("")
-async def create_connection(body: ConnectionCreate):
+async def create_connection(body: ConnectionCreate, request: Request):
+    require_permission(request, PROVIDERS_MANAGE)
     try:
         conn = connection_service.create_connection(
             provider_type=body.provider_type,
@@ -101,7 +129,8 @@ async def create_connection(body: ConnectionCreate):
 
 
 @router.post("/import-env")
-async def import_env_credentials():
+async def import_env_credentials(request: Request):
+    require_permission(request, PROVIDERS_MANAGE)
     try:
         return connection_service.import_from_env()
     except Exception as exc:  # noqa: BLE001
@@ -117,7 +146,8 @@ async def get_connection(connection_id: str):
 
 
 @router.put("/{connection_id}")
-async def update_connection(connection_id: str, body: ConnectionUpdate):
+async def update_connection(connection_id: str, body: ConnectionUpdate, request: Request):
+    require_permission(request, PROVIDERS_MANAGE)
     try:
         conn = connection_service.update_connection(
             connection_id,
@@ -138,7 +168,8 @@ async def update_connection(connection_id: str, body: ConnectionUpdate):
 
 
 @router.delete("/{connection_id}")
-async def delete_connection(connection_id: str):
+async def delete_connection(connection_id: str, request: Request):
+    require_permission(request, PROVIDERS_MANAGE)
     try:
         connection_service.delete_connection(connection_id)
         return {"deleted": True, "connection_id": connection_id}

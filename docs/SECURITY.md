@@ -81,31 +81,32 @@ backend/workspace/security/approval_history.json
 - 计划确认、编辑及失败历史有后端测试，但这仍是 Agent 工作流控制，不是权限边界。
 - 在图外 `interrupt()` 失败时异常上抛，不再伪装为可靠暂停。
 
-## API Token 与 Console JWT
+## API Token、团队身份与 Console 会话
 
-`ApiSecurityMiddleware` 只保护 `/api/v1` 路径。以下规则需要同时理解：
+`ApiSecurityMiddleware` 只保护 `/api/v1` 路径。当前身份模型为**单实例、单工作区、多用户**：
 
-- `API_TOKEN` 和 `CONSOLE_PASSWORD` 都为空时，API 默认开放，适合可信本地开发，不适合公网。
-- API Token 支持 `Authorization: Bearer <token>` 或 `X-API-Token`。
-- 设置 `CONSOLE_PASSWORD` 后，`POST /api/v1/auth/login` 返回 HMAC-SHA256 签名的 JWT，
-  同时写入 `boetclaw_console_token` HttpOnly、SameSite=Lax Cookie。
-- JWT 密钥按 `CONSOLE_JWT_SECRET`、`API_TOKEN`、`CONSOLE_PASSWORD` 的顺序回退；
-  生产环境应设置独立、随机且足够长的 `CONSOLE_JWT_SECRET`。
-- JWT 默认有效期由 `CONSOLE_JWT_TTL_MINUTES=480` 控制；当前没有服务端撤销列表，
-  logout 只删除客户端 Cookie。
-- `/api/v1/auth/*`、`/api/v1/monitor/health` 以及 `/api/v1/gateway/*/webhook` 绕过中间件鉴权
-  （与限流）。Webhook 依赖各渠道平台验签，见下文。
-- `/docs`、`/openapi.json`、`/ui/` 和根路径不在 `/api/v1` 下，因此该中间件不保护它们。
-- Cookie 当前未设置 `Secure` 属性。公网部署必须终止 HTTPS，并应评估在代码或代理层补强 Cookie 策略。
+- 无用户且未配置 `API_TOKEN`/`CONSOLE_PASSWORD` 时为开放模式（可信本地开发）。
+- 空用户库可通过本机或 `BOOTSTRAP_TOKEN` 调用 `POST /api/v1/auth/bootstrap` 创建首个 owner。
+- 用户密码使用 Argon2id；会话 JWT 含 `user_id/role/token_version/session_id`，服务端 SQLite WAL 持久化会话，支持撤销与 token version 失效。
+- Cookie：`boetclaw_console_token`（HttpOnly、SameSite=Lax；生产可设 `CONSOLE_COOKIE_SECURE=true`）+ CSRF（`boetclaw_csrf` / `X-CSRF-Token`）。Bearer/API Token 写请求不校验 Cookie CSRF。
+- `API_TOKEN` 兼容为受审计的 legacy service principal（admin 级，不可管理 owner / 读取凭据明文）。
+- `CONSOLE_PASSWORD` 仍可作为兼容登录；owner 创建后 UI 提示停用，不自动改 `.env`。
+- 系统角色：`owner` / `admin` / `operator` / `viewer`；Agent/知识库支持 `private|workspace` 与 `viewer|editor|runner` 授权。无权限资源统一 404。
+- 身份库默认路径：`workspace/identity/identity.sqlite3`（WAL）；审计不记录密码/token/全文。
 
 建议生产配置：
 
 ```env
 API_TOKEN=<独立随机长令牌>
-CONSOLE_PASSWORD=<独立强密码>
 CONSOLE_JWT_SECRET=<独立随机长密钥>
 CONSOLE_JWT_TTL_MINUTES=60
+CONSOLE_COOKIE_SECURE=true
+BOOTSTRAP_TOKEN=<可选，非本机 bootstrap 时必填>
+# CONSOLE_PASSWORD=  # 迁移期兼容；团队启用后建议移除
 ```
+
+`/api/v1/auth/*`、`/api/v1/monitor/health` 以及 `/api/v1/gateway/*/webhook` 绕过中间件鉴权（与限流）。Webhook 依赖各渠道平台验签。
+`/docs`、`/openapi.json`、`/ui/` 和根路径不在 `/api/v1` 下，因此该中间件不保护它们。
 
 ## 限流
 

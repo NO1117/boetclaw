@@ -71,6 +71,15 @@ async def phase1_fast(app: Any) -> None:
         app.state.connections_ready = False
         logger.error("connections_init_failed", error=str(exc))
 
+    from app.identity.service import identity_service
+
+    try:
+        identity_service.initialize()
+        app.state.identity_ready = True
+    except Exception as exc:  # noqa: BLE001
+        app.state.identity_ready = False
+        logger.error("identity_init_failed", error=str(exc))
+
     app.state.ready = True
     app.state.agent_ready = False
     elapsed_ms = (time.perf_counter() - t) * 1000

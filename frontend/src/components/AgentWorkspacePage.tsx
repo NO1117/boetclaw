@@ -38,6 +38,7 @@ import {
 import { capabilityTags } from '../utils/modelCapabilities'
 import SkillsManager from './SkillsManager'
 import AgentKnowledgeBindings from './AgentKnowledgeBindings'
+import ResourceAccessPanel from './ResourceAccessPanel'
 
 interface AgentWorkspacePageProps {
   currentAgent: string
@@ -49,7 +50,7 @@ interface AgentWorkspacePageProps {
   onOpenChat: (agentId: string) => void
 }
 
-type WorkspaceTab = 'overview' | 'config' | 'skills' | 'knowledge' | 'files' | 'history' | 'versions'
+type WorkspaceTab = 'overview' | 'config' | 'skills' | 'knowledge' | 'files' | 'history' | 'versions' | 'access'
 type WizardStep = 'identity' | 'model' | 'behavior' | 'capabilities' | 'confirm'
 
 const TABS: Array<{ id: WorkspaceTab; label: string }> = [
@@ -57,6 +58,7 @@ const TABS: Array<{ id: WorkspaceTab; label: string }> = [
   { id: 'config', label: '配置' },
   { id: 'skills', label: '技能' },
   { id: 'knowledge', label: '知识库' },
+  { id: 'access', label: '访问权限' },
   { id: 'files', label: '文件' },
   { id: 'history', label: '历史' },
   { id: 'versions', label: '版本' },
@@ -841,6 +843,13 @@ export default function AgentWorkspacePage({
               {activeTab === 'config' && renderConfig()}
               {activeTab === 'skills' && <SkillsManager agentId={selected.agent_id} />}
               {activeTab === 'knowledge' && <AgentKnowledgeBindings agentId={selected.agent_id} />}
+              {activeTab === 'access' && (
+                <ResourceAccessPanel
+                  resourceType="agent"
+                  resourceId={selected.agent_id}
+                  currentUser={{ role: 'owner', permissions: ['agents:admin'], open_mode: true }}
+                />
+              )}
               {activeTab === 'files' && (
                 <div className="mgr-list">
                   {agentFiles.length === 0 && <div className="empty-hint">files 目录暂无文件。</div>}

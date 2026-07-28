@@ -31,14 +31,59 @@ test.describe('login gate', () => {
   test('错误密码可见失败，正确密码进入控制台', async ({ page, fakeBackend }) => {
     await page.goto('/chat')
     await expect(page.getByText('管理控制台登录')).toBeVisible()
-    await page.getByPlaceholder('控制台密码').fill('wrong')
+    await page.getByPlaceholder('密码').fill('wrong')
     await page.getByRole('button', { name: '登录' }).click()
     await expect(page.locator('.login-error')).toBeVisible()
 
-    await page.getByPlaceholder('控制台密码').fill(fakeBackend.consolePassword)
+    await page.getByPlaceholder('密码').fill(fakeBackend.consolePassword)
     await page.getByRole('button', { name: '登录' }).click()
     await expect(page.getByRole('heading', { name: '对话工作台' })).toBeVisible()
     await expect(page.getByRole('button', { name: /退出/ })).toBeVisible()
+  })
+})
+
+test.describe('team identity rbac', () => {
+  test('bootstrap → 创建角色 → viewer 越权拒绝', async ({ page, fakeBackend }) => {
+    fakeBackend.bootstrapNeeded = true
+    fakeBackend.loginRequired = true
+    fakeBackend.authenticated = false
+    await page.goto('/chat')
+    await expect(page.getByText('创建首个 Owner')).toBeVisible()
+    await page.getByPlaceholder('用户名').fill('owner')
+    await page.getByPlaceholder('初始密码（至少 8 位）').fill('password123')
+    await page.getByRole('button', { name: '创建 Owner' }).click()
+    await expect(page.getByRole('heading', { name: '对话工作台' })).toBeVisible()
+
+    await page.getByRole('button', { name: '团队与权限' }).click()
+    await expect(page.getByText('创建用户')).toBeVisible()
+    await page.getByPlaceholder('用户名').fill('op1')
+    await page.getByPlaceholder('初始密码（至少 8 位）').fill('password123')
+    await page.locator('.team-create-form select').selectOption('operator')
+    await page.getByRole('button', { name: '创建' }).click()
+    await expect(page.locator('.team-user-table .muted', { hasText: 'op1' })).toBeVisible()
+
+    await page.getByPlaceholder('用户名').fill('view1')
+    await page.getByPlaceholder('初始密码（至少 8 位）').fill('password123')
+    await page.locator('.team-create-form select').selectOption('viewer')
+    await page.getByRole('button', { name: '创建' }).click()
+    await expect(page.locator('.team-user-table .muted', { hasText: 'view1' })).toBeVisible()
+
+    await page.getByRole('button', { name: /退出/ }).click()
+    await page.getByPlaceholder('用户名').fill('view1')
+    await page.getByPlaceholder('密码').fill('password123')
+    await page.getByRole('button', { name: '登录' }).click()
+    await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
+    await page.getByRole('button', { name: '对话工作台' }).click()
+    await expect(page.getByRole('heading', { name: '对话工作台' })).toBeVisible()
+    const denied = await page.evaluate(async () => {
+      const res = await fetch('/api/v1/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'e2e-csrf' },
+        body: JSON.stringify({ title: 'x', prompt: 'y' }),
+      })
+      return res.status
+    })
+    expect(denied).toBe(404)
   })
 })
 

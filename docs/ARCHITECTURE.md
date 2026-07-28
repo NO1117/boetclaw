@@ -46,6 +46,7 @@ LLM Provider / MCP / local filesystem / channel APIs
 | 业务服务 | 任务、Cron、Heartbeat、消息渠道 | `backend/app/services/` |
 | 钻井领域 | 井、井段、日报、参数、LAS | `backend/app/domain/` |
 | 安全 | Guardian、策略引擎、审批、Console JWT | `backend/app/security/` |
+| 团队身份 | 用户/会话/RBAC/资源 ACL/审计（单工作区） | `backend/app/identity/`；`api/routes/auth.py`、`users.py` |
 
 ## 3. 启动与关闭流程
 
@@ -317,15 +318,16 @@ Checkpoint SQLite schema 由官方 saver `setup()` 向前初始化。领域 `dom
 
 ### 9.1 HTTP API
 
-- `/api/v1` 在配置 `API_TOKEN` 或 `CONSOLE_PASSWORD` 后受保护。
-- 接受 Bearer API Token、`X-API-Token`、Console JWT Bearer/cookie。
+- `/api/v1` 在存在用户库、或配置 `API_TOKEN`/`CONSOLE_PASSWORD` 后受保护。
+- 接受 Bearer API Token、`X-API-Token`、Console 会话 JWT Bearer/cookie。
 - `/api/v1/monitor/health` 和 `/api/v1/auth/*` 豁免。
-- 限流按 token 摘要优先、IP 兜底，状态仅在当前进程。
+- 限流按 actor/token 摘要优先、IP 兜底，状态仅在当前进程。
 - CORS 来源由 `CORS_ORIGINS` 配置。
+- 资源授权失败统一 404（防枚举）；权限决策基于服务端 actor，不信任客户端 user ID。
 
-### 9.2 Console
+### 9.2 Console 与团队身份
 
-`CONSOLE_PASSWORD` 为空时保持开放；配置后登录签发短期 HMAC-SHA256 JWT。当前是单密码模型，无用户、RBAC、账户锁定或 MFA。
+无用户且未配置 `API_TOKEN`/`CONSOLE_PASSWORD` 时为开放模式。空用户库可通过本机或 `BOOTSTRAP_TOKEN` 创建首个 owner。用户密码 Argon2id；会话 JWT 含 `user_id/role/token_version/session_id`，SQLite WAL（`identity_sqlite_path`）持久化会话与授权。系统角色 `owner/admin/operator/viewer`；Agent/知识库支持 `private|workspace` 与 `viewer|editor|runner` ACL。Cookie 写请求校验 CSRF；`API_TOKEN`/`CONSOLE_PASSWORD` 保持兼容。无 MFA、无租户/SSO。
 
 ### 9.3 工具与文件
 
@@ -380,7 +382,7 @@ Compose 中 frontend 和 backend 是两个容器；backend 镜像自身仍包含
 4. **Workspace 生命周期**：磁盘列表发现与可选 purge 已闭环；idle eviction 未调度；`.purged` 标记仅用于 resume 语义，不恢复工作区内容。
 5. **存储可靠性**：DomainStore 已增强单实例原子写和备份，但 JSON/JSONL 仍不适合高并发和多实例；事务数据库与迁移仍属未来。
 6. **调度可靠性**：Cron history 已单机落盘；APScheduler 多副本仍会重复触发。
-7. **安全模型**：无多用户 RBAC；插件是进程内代码；ToolGuard 不是沙箱。
+7. **安全模型**：单实例单工作区多用户 RBAC 已落地；无租户/SSO/自定义角色；插件是进程内代码；ToolGuard 不是沙箱。
 8. **限流语义**：Provider 限流位于模型解析入口，不覆盖每次模型请求。
 9. **领域完整性**：关联 CRUD 和井依赖 409 已实现；无数据库外键、跨进程事务、批量操作和乐观并发版本。
 10. **国际化**：主要是中文 UI，zh/en 只覆盖命令和部分安全提示。

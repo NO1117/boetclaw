@@ -114,22 +114,22 @@ async def test_api_delete_purge_query_and_body(tmp_path, monkeypatch):
         mgr.create("a-purge")
         await provider.get("a-purge")
 
-        soft = await agents_routes.delete_agent("a-tomb", purge=False, body=None)
+        soft = await agents_routes.delete_agent("a-tomb", request=None, purge=False, body=None)
         assert soft["purged"] is False
         assert soft["checkpoint_retained"] is True
         assert (agents_root / "a-tomb" / ".deleted").exists()
 
-        listed = await agents_routes.list_agents()
+        listed = await agents_routes.list_agents(request=None)
         ids = {a["agent_id"] for a in listed["agents"]}
         assert "a-tomb" not in ids
         assert "a-purge" in ids
         assert "default" in ids
 
         with pytest.raises(HTTPException) as default_exc:
-            await agents_routes.delete_agent("default", purge=True, body=None)
+            await agents_routes.delete_agent("default", request=None, purge=True, body=None)
         assert default_exc.value.status_code == 400
 
-        hard = await agents_routes.delete_agent("a-purge", purge=True, body=None)
+        hard = await agents_routes.delete_agent("a-purge", request=None, purge=True, body=None)
         assert hard["purged"] is True
         assert hard["checkpoint_retained"] is False
         assert not (agents_root / "a-purge").exists()
@@ -139,6 +139,7 @@ async def test_api_delete_purge_query_and_body(tmp_path, monkeypatch):
         mgr.create("body-purge")
         via_body = await agents_routes.delete_agent(
             "body-purge",
+            request=None,
             purge=False,
             body=agents_routes.DeleteAgentBody(purge=True),
         )
@@ -199,9 +200,9 @@ async def test_api_cold_start_lists_disk_agent(tmp_path, monkeypatch):
     monkeypatch.setattr(mam, "multi_agent_manager", mgr)
     monkeypatch.setattr(agents_routes, "multi_agent_manager", mgr)
 
-    listed = await agents_routes.list_agents()
+    listed = await agents_routes.list_agents(request=None)
     ids = {a["agent_id"] for a in listed["agents"]}
     assert "cold-disk" in ids
     assert "default" in ids
-    detail = await agents_routes.get_agent("cold-disk")
+    detail = await agents_routes.get_agent("cold-disk", request=None)
     assert detail["loaded"] is False

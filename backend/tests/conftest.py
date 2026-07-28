@@ -35,3 +35,18 @@ def isolated_paths(tmp_path, monkeypatch, master_key):
     monkeypatch.setattr("app.providers.connections.store.connection_store._connections", {})
     monkeypatch.setattr("app.providers.connections.store.connection_store._default_connection_id", None)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_identity(tmp_path, monkeypatch):
+    """Keep identity SQLite out of shared workspace/ for every test."""
+    from app.identity.service import identity_service
+    from app.identity.store import IdentityStore
+
+    db_path = tmp_path / "identity-test" / "identity.sqlite3"
+    monkeypatch.setattr("app.core.config.settings.identity_sqlite_path", db_path, raising=False)
+    identity_service.close()
+    identity_service.store = IdentityStore(db_path=db_path)
+    identity_service._initialized = False
+    yield
+    identity_service.close()

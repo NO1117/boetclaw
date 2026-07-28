@@ -1,4 +1,5 @@
 import { parseSSEBlocks, type ParsedSSEBlock } from './sse'
+import { apiFetch, getCsrfToken } from './authClient'
 
 const API_BASE = '/api/v1'
 
@@ -38,7 +39,7 @@ export async function cancelAgentRun(
   threadId: string,
   runId = '',
 ): Promise<RunCancelResult> {
-  const res = await fetch(`${API_BASE}/agent/runs/cancel`, {
+  const res = await apiFetch(`${API_BASE}/agent/runs/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, thread_id: threadId, run_id: runId }),
@@ -112,11 +113,12 @@ export function streamChat(
     onDone()
   }
 
-  fetch(`${API_BASE}/agent/chat/stream`, {
+  apiFetch(`${API_BASE}/agent/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(lang ? { 'Accept-Language': lang } : {}),
+      ...(getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken() } : {}),
     },
     body: JSON.stringify({
       message,

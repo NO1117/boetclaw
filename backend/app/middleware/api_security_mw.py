@@ -1,25 +1,36 @@
-"""API token authentication and lightweight rate limiting."""
+"""API token / session authentication, CSRF, and lightweight rate limiting."""
 
 from __future__ import annotations
 
+import secrets
 import time
-from hashlib import sha256
 from collections import defaultdict, deque
 from collections.abc import Callable
+from hashlib import sha256
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import settings
-from app.security.console_auth import TOKEN_COOKIE, extract_bearer_token, verify_console_token
+from app.identity.actor import Actor
+from app.identity.resolve import resolve_request_actor
+from app.security.console_auth import (
+    CSRF_COOKIE,
+    CSRF_HEADER,
+    TOKEN_COOKIE,
+    extract_bearer_token,
+)
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 
 class ApiSecurityMiddleware(BaseHTTPMiddleware):
     """Protect /api/v1 routes when configured.
 
-    Defaults are open for local development: empty API_TOKEN disables auth and
-    API_RATE_LIMIT_PER_MINUTE=0 disables rate limiting.
+    Defaults are open for local development: empty API_TOKEN, empty CONSOLE_PASSWORD,
+    and no bootstrapped users disables auth. API_RATE_LIMIT_PER_MINUTE=0 disables rate limiting.
     """
 
     def __init__(self, app, api_prefix: str = "/api/v1") -> None:
@@ -40,36 +51,47 @@ class ApiSecurityMiddleware(BaseHTTPMiddleware):
         """Platform callbacks cannot send API_TOKEN; rely on channel verify_signature."""
         return "/gateway/" in path and path.endswith("/webhook")
 
-    @staticmethod
-    def _authorized(request: Request) -> bool:
-        api_token = settings.api_token
-        console_password = settings.console_password
-        if not api_token and not console_password:
+    def _resolve_actor(self, request: Request) -> Actor | None:
+        return resolve_request_actor(request)
+
+    def _csrf_ok(self, request: Request, actor: Actor) -> bool:
+        if request.method in _SAFE_METHODS:
             return True
-        auth = request.headers.get("authorization", "")
-        bearer = extract_bearer_token(auth)
-        if api_token and bearer == api_token:
+        # Bearer / API token / open mode do not use cookie CSRF.
+        if actor.auth_via in {"bearer", "api_token", "open"}:
             return True
-        if api_token and request.headers.get("x-api-token", "") == api_token:
+        if actor.actor_type == "console_legacy" and actor.auth_via == "bearer":
             return True
-        console_token = bearer or request.cookies.get(TOKEN_COOKIE, "")
-        return bool(verify_console_token(console_token))
+        if actor.auth_via != "cookie":
+            return True
+        header = request.headers.get(CSRF_HEADER, "")
+        cookie = request.cookies.get(CSRF_COOKIE, "")
+        expected = actor.csrf_token or cookie
+        if not header or not expected:
+            return False
+        return secrets.compare_digest(header, expected)
 
     @staticmethod
-    def _rate_key(request: Request) -> str:
+    def _rate_key(request: Request, actor: Actor | None) -> str:
+        if actor and actor.user_id:
+            return f"actor:{actor.actor_type}:{actor.user_id}"
         auth = request.headers.get("authorization", "")
-        token = extract_bearer_token(auth) or request.headers.get("x-api-token", "") or request.cookies.get(TOKEN_COOKIE, "")
+        token = (
+            extract_bearer_token(auth)
+            or request.headers.get("x-api-token", "")
+            or request.cookies.get(TOKEN_COOKIE, "")
+        )
         if token:
             digest = sha256(token.encode("utf-8")).hexdigest()[:16]
             return f"token:{digest}"
         client = request.client.host if request.client else "unknown"
         return f"ip:{client}"
 
-    def _rate_limited(self, request: Request) -> bool:
+    def _rate_limited(self, request: Request, actor: Actor | None) -> bool:
         limit = settings.api_rate_limit_per_minute
         if limit <= 0:
             return False
-        key = self._rate_key(request)
+        key = self._rate_key(request, actor)
         now = time.monotonic()
         window_start = now - 60
         hits = self._hits[key]
@@ -82,15 +104,28 @@ class ApiSecurityMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
-        if (
-            not path.startswith(self.api_prefix)
-            or self._is_health_path(path)
+        if not path.startswith(self.api_prefix):
+            return await call_next(request)
+
+        is_exempt = (
+            self._is_health_path(path)
             or self._is_auth_path(path)
             or self._is_gateway_webhook_path(path)
-        ):
+        )
+
+        actor = self._resolve_actor(request)
+        request.state.actor = actor
+
+        if is_exempt:
             return await call_next(request)
-        if not self._authorized(request):
+
+        if actor is None:
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-        if self._rate_limited(request):
+
+        if not self._csrf_ok(request, actor):
+            return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
+
+        if self._rate_limited(request, actor):
             return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
+
         return await call_next(request)

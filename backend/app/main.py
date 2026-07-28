@@ -32,6 +32,7 @@ from app.api.routes import (
     tools,
     voice,
 )
+from app.api.routes.users import acl_router, audit_router, users_router
 from app.core.config import settings
 from app.core.observability import setup_logging
 from app.middleware.api_security_mw import ApiSecurityMiddleware
@@ -79,6 +80,9 @@ async def lifespan(app: FastAPI):
         from app.memory.service import memory_service
 
         memory_service.close()
+        from app.identity.service import identity_service
+
+        identity_service.close()
 
 
 app = FastAPI(
@@ -100,6 +104,9 @@ app.add_middleware(ApiSecurityMiddleware)
 API_PREFIX = "/api/v1"
 app.include_router(agent.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(acl_router, prefix=API_PREFIX)
+app.include_router(audit_router, prefix=API_PREFIX)
 app.include_router(cron.router, prefix=API_PREFIX)
 app.include_router(tasks.router, prefix=API_PREFIX)
 app.include_router(domain.router, prefix=API_PREFIX)

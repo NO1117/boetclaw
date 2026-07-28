@@ -31,6 +31,7 @@ import ChannelsManager from './components/ChannelsManager'
 import MemoryManager from './components/MemoryManager'
 import MemoryContextCard from './components/MemoryContextCard'
 import KnowledgeBasePage from './components/KnowledgeBasePage'
+import TeamPermissionsPage from './components/TeamPermissionsPage'
 import {
   cancelTask,
   archiveChatSession,
@@ -39,6 +40,7 @@ import {
   unarchiveChatSession,
   fetchApprovalHistory,
   fetchConsoleAuthStatus,
+  fetchAuthMe,
   fetchChatSession,
   fetchChatSessions,
   fetchGuardConfig,
@@ -49,6 +51,8 @@ import {
   fetchTraceTimeline,
   loginConsole,
   logoutConsole,
+  bootstrapOwner,
+  hasPermission,
   requeueTask,
   runTask,
   updateGuardConfig,
@@ -57,13 +61,14 @@ import {
   type ChatSessionDetail,
   type ChatSessionSummary,
   type ConsoleAuthStatus,
+  type AuthUser,
   type Task,
   type TraceTimeline,
   type MemoryContextSummary,
 } from './services/api'
 import './App.css'
 
-type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security' | 'memory'
+type SettingsTab = 'skills' | 'providers' | 'scheduler' | 'plugins' | 'mcp' | 'channels' | 'security' | 'memory' | 'team'
 
 interface AppRoute {
   page: 'chat' | 'tasks' | 'agents' | 'knowledge' | 'trace' | 'settings' | 'removed' | 'not-found'
@@ -151,7 +156,7 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   if (path === '/settings') return { page: 'settings', settingsTab: 'skills' }
   if (path.startsWith('/settings/')) {
     const raw = path.slice('/settings/'.length)
-    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security', 'memory']
+    const allowed: SettingsTab[] = ['skills', 'providers', 'scheduler', 'plugins', 'mcp', 'channels', 'security', 'memory', 'team']
     return {
       page: 'settings',
       settingsTab: allowed.includes(raw as SettingsTab) ? raw as SettingsTab : 'skills',
@@ -204,8 +209,23 @@ export default function App() {
 
   useEffect(() => {
     fetchConsoleAuthStatus()
-      .then(setAuthStatus)
-      .catch(() => setAuthStatus({ login_required: false, authenticated: true }))
+      .then(async status => {
+        if (status.authenticated && !status.open_mode) {
+          try {
+            const me = await fetchAuthMe()
+            setAuthStatus({
+              ...status,
+              user: me.user as ConsoleAuthStatus['user'],
+              csrf_token: me.csrf_token,
+            })
+            return
+          } catch {
+            // fall through
+          }
+        }
+        setAuthStatus(status)
+      })
+      .catch(() => setAuthStatus({ login_required: false, authenticated: true, open_mode: true }))
       .finally(() => setAuthLoading(false))
   }, [])
 
@@ -248,8 +268,18 @@ export default function App() {
   if (authStatus?.login_required && !authStatus.authenticated) {
     return (
       <LoginPage
-        onLogin={async (password) => {
-          const next = await loginConsole(password)
+        bootstrapNeeded={Boolean(authStatus.bootstrap_needed)}
+        openMode={Boolean(authStatus.open_mode)}
+        onLogin={async (username, password) => {
+          const next = await loginConsole(password, username)
+          setAuthStatus(next)
+        }}
+        onBootstrap={async (username, password, displayName) => {
+          const next = await bootstrapOwner({
+            username,
+            password,
+            display_name: displayName,
+          })
           setAuthStatus(next)
         }}
       />
@@ -291,13 +321,30 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">
           <span className="sidebar-footnote">单机 Agent 控制台</span>
-          {authStatus?.login_required && (
+          {authStatus?.open_mode && <span className="open-mode-badge">开放模式</span>}
+          {authStatus?.deprecate_console_password && (
+            <span className="open-mode-badge">请停用 CONSOLE_PASSWORD</span>
+          )}
+          {authStatus?.user && (
+            <div className="user-menu">
+              <div className="user-menu-name">
+                {authStatus.user.display_name || authStatus.user.username || '用户'}
+              </div>
+              <div className="user-menu-role">{authStatus.user.role || authStatus.user.actor_type}</div>
+              {hasPermission(authStatus.user, 'users:read') && (
+                <button type="button" className="sidebar-logout" onClick={() => navigate('/settings/team')}>
+                  团队与权限
+                </button>
+              )}
+            </div>
+          )}
+          {(authStatus?.login_required || authStatus?.user?.actor_type === 'user') && (
             <button
               type="button"
               className="sidebar-logout"
               onClick={async () => {
                 await logoutConsole()
-                setAuthStatus({ login_required: true, authenticated: false })
+                setAuthStatus({ login_required: true, authenticated: false, bootstrap_needed: false })
               }}
             >
               <LogOut size={14} />
@@ -545,6 +592,7 @@ export default function App() {
           <SettingsPage
             tab={settingsTab}
             agentId={agentId}
+            currentUser={authStatus?.user}
             onTabChange={(tab) => navigate(`/settings/${tab}`)}
           />
         </main>
@@ -607,20 +655,40 @@ function PageHeader({
   )
 }
 
-function LoginPage({ onLogin }: { onLogin: (password: string) => Promise<void> }) {
+function LoginPage({
+  onLogin,
+  onBootstrap,
+  bootstrapNeeded = false,
+  openMode = false,
+}: {
+  onLogin: (username: string, password: string) => Promise<void>
+  onBootstrap: (username: string, password: string, displayName: string) => Promise<void>
+  bootstrapNeeded?: boolean
+  openMode?: boolean
+}) {
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const submit = async () => {
     if (!password) {
-      setError('请输入控制台密码')
+      setError(bootstrapNeeded ? '请设置初始密码' : '请输入密码')
+      return
+    }
+    if (bootstrapNeeded && !username) {
+      setError('请输入用户名')
       return
     }
     setLoading(true)
     setError('')
     try {
-      await onLogin(password)
+      if (bootstrapNeeded) {
+        await onBootstrap(username, password, displayName || username)
+      } else {
+        await onLogin(username, password)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -635,23 +703,42 @@ function LoginPage({ onLogin }: { onLogin: (password: string) => Promise<void> }
           <Sparkles size={28} />
           <div>
             <h1>BoetClaw</h1>
-            <span>管理控制台登录</span>
+            <span>{bootstrapNeeded ? '创建首个 Owner' : '管理控制台登录'}</span>
           </div>
         </div>
-        <p>请输入 `CONSOLE_PASSWORD` 配置的控制台密码。</p>
+        {openMode && <p className="open-mode-badge">当前为开放模式（未启用鉴权）</p>}
+        <p>
+          {bootstrapNeeded
+            ? '空用户库首次启动：创建本地 Owner 账号后立即启用认证。'
+            : '使用用户名与密码登录；兼容仅密码的 CONSOLE_PASSWORD。'}
+        </p>
+        <input
+          type="text"
+          placeholder="用户名"
+          value={username}
+          onChange={e => setUsername(e.target.value)}
+          autoFocus
+        />
+        {bootstrapNeeded && (
+          <input
+            type="text"
+            placeholder="显示名称（可选）"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+          />
+        )}
         <input
           type="password"
-          placeholder="控制台密码"
+          placeholder={bootstrapNeeded ? '初始密码（至少 8 位）' : '密码'}
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') void submit()
           }}
-          autoFocus
         />
         {error && <div className="login-error">{error}</div>}
         <button className="primary-btn" onClick={() => void submit()} disabled={loading}>
-          {loading ? '登录中...' : '登录'}
+          {loading ? '处理中...' : bootstrapNeeded ? '创建 Owner' : '登录'}
         </button>
       </div>
     </div>
@@ -1113,10 +1200,12 @@ function TaskDetailContent({
 function SettingsPage({
   tab,
   agentId,
+  currentUser,
   onTabChange,
 }: {
   tab: SettingsTab
   agentId: string
+  currentUser?: AuthUser | null
   onTabChange: (tab: SettingsTab) => void
 }) {
   const tabs: { id: SettingsTab; label: string }[] = [
@@ -1128,6 +1217,7 @@ function SettingsPage({
     { id: 'mcp', label: 'MCP' },
     { id: 'memory', label: '长期记忆' },
     { id: 'security', label: '安全' },
+    { id: 'team', label: '团队与权限' },
   ]
 
   const active = tabs.find(item => item.id === tab) ?? tabs[0]
@@ -1182,6 +1272,7 @@ function SettingsPage({
           {tab === 'channels' && <ChannelsManager />}
           {tab === 'memory' && <MemoryManager agentId={agentId} />}
           {tab === 'security' && <SecuritySettings />}
+          {tab === 'team' && <TeamPermissionsPage currentUser={currentUser} />}
         </div>
       </section>
       <aside className="settings-side">

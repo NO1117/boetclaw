@@ -11,8 +11,8 @@
 - PLAN-710 专项：`tests/test_phase14_sessions.py` 4 passed；全量基线按 collect-only `213`。
 - PLAN-210 状态为已完成：任务、同步/SSE、渠道 Agent 子任务、`/stop` 和运行取消 API 已纳入单进程执行级取消；边界是不支持跨进程、多副本或服务重启后的活动运行取消。
 - 前端已配置 Vitest/jsdom/Testing Library、V8 覆盖率报告和关键协议模块门槛。
-- 前端现有 5 个测试文件、29 项组件/协议测试（含会话归档契约）。
-- 浏览器 E2E（PLAN-410）已建立并复验：默认 Chromium + fake Provider 门禁（2026-07-20 `npm run test:e2e` 8 passed）；真实 Provider/渠道为 optional manual 套件。项目级 CI（PLAN-420）已落地：`.github/workflows/ci.yml` + `scripts/ci-local.*`；**Git 已初始化，推送到 GitHub 后启用 Actions / required checks**。Vitest 排除 `e2e/**`，`npm test` 仅跑组件/协议单测。
+- 前端含团队权限/登录门禁相关 Vitest（`TeamPermissionsPage`、`authPermissions` 等）；E2E 含 `team identity rbac` 流程。
+- 浏览器 E2E（PLAN-410）默认 Chromium + fake Provider 门禁；真实 Provider/渠道为 optional manual 套件。项目级 CI（PLAN-420）已落地：`.github/workflows/ci.yml` + `scripts/ci-local.*`。Vitest 排除 `e2e/**`，`npm test` 仅跑组件/协议单测。
 
 以上数字是当前快照，不应理解为长期固定指标。
 
@@ -61,6 +61,7 @@
 | `test_phase17_agent_index.py` | 1 | Agent 文件索引和历史 |
 | `test_phase17_artifact_meta.py` | 1 | 生成代码 sidecar 元数据 |
 | `test_phase23_api_security.py` | 5 | API Token、健康检查豁免、API 限流、Console JWT |
+| `test_team_identity_rbac.py` | 11 | Argon2id、角色矩阵、bootstrap、锁定、会话撤销、CSRF、兼容登录、最后 owner 事务、admin 边界、ACL IDOR |
 | `test_phase24_task_persistence.py` | 2 | 任务 SQLite 持久化、重启后 running → interrupted |
 | `test_durable_task_queue.py` | 11 | 迁移幂等、租约、并发、重试分类、dead-letter、分页、脱敏、竞态 |
 | `test_phase25_gateway_access_control.py` | 4 | 渠道白名单持久化、允许/拒绝、用户限流 |

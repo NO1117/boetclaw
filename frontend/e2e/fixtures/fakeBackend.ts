@@ -53,6 +53,11 @@ export interface FakeStore {
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
+  bootstrapNeeded?: boolean
+  currentUser?: Record<string, unknown> | null
+  users?: Array<Record<string, unknown>>
+  agentGrants?: Record<string, Array<Record<string, unknown>>>
+  revokedUsers?: string[]
 }
 
 function nowIso() {
@@ -244,8 +249,18 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
         },
       }
       store.authenticated = !store.loginRequired
+      store.bootstrapNeeded = false
+      store.currentUser = null
+      store.users = []
+      store.agentGrants = {}
+      store.revokedUsers = []
       store.releaseHangStreams()
     },
+    bootstrapNeeded: false,
+    currentUser: null,
+    users: [],
+    agentGrants: {},
+    revokedUsers: [],
   }
   return store
 }
@@ -290,13 +305,88 @@ export async function installFakeBackend(
       return json(route, {
         login_required: store.loginRequired,
         authenticated: store.authenticated,
+        open_mode: !store.loginRequired && !(store as FakeStore & { users?: unknown[] }).users?.length,
+        bootstrap_needed: Boolean((store as FakeStore & { bootstrapNeeded?: boolean }).bootstrapNeeded),
         ttl_minutes: 480,
+        user: store.authenticated ? (store as FakeStore & { currentUser?: unknown }).currentUser : null,
+      })
+    }
+    if (path.endsWith('/auth/me') && method === 'GET') {
+      return json(route, {
+        authenticated: store.authenticated,
+        open_mode: !store.loginRequired,
+        csrf_token: store.authenticated ? 'e2e-csrf' : '',
+        user: (store as FakeStore & { currentUser?: unknown }).currentUser ?? {
+          actor_type: 'open',
+          role: 'owner',
+          permissions: ['users:read', 'users:write', 'agents:admin', 'tasks:create'],
+          open_mode: true,
+        },
+      })
+    }
+    if (path.endsWith('/auth/bootstrap') && method === 'POST') {
+      const body = request.postDataJSON() as {
+        username?: string
+        password?: string
+        display_name?: string
+      }
+      store.loginRequired = true
+      store.authenticated = true
+      ;(store as FakeStore & { bootstrapNeeded?: boolean }).bootstrapNeeded = false
+      const user = {
+        id: 'owner-1',
+        username: body.username || 'owner',
+        display_name: body.display_name || body.username || 'owner',
+        role: 'owner',
+        status: 'active',
+        password: body.password,
+        permissions: [
+          'users:read',
+          'users:write',
+          'users:manage_owners',
+          'agents:admin',
+          'agents:create',
+          'tasks:create',
+          'tasks:admin',
+          'kb:admin',
+          'sessions:manage',
+        ],
+      }
+      ;(store as FakeStore & { currentUser?: unknown; users?: unknown[] }).currentUser = user
+      ;(store as FakeStore & { users?: unknown[] }).users = [user]
+      return json(route, {
+        login_required: true,
+        authenticated: true,
+        token: store.token,
+        csrf_token: 'e2e-csrf',
+        user,
       })
     }
     if (path.endsWith('/auth/login') && method === 'POST') {
-      const body = request.postDataJSON() as { password?: string }
+      const body = request.postDataJSON() as { password?: string; username?: string }
       if (!store.loginRequired) {
-        return json(route, { login_required: false, authenticated: true, token: '' })
+        return json(route, { login_required: false, authenticated: true, token: '', open_mode: true })
+      }
+      const users = ((store as FakeStore & { users?: Array<Record<string, unknown>> }).users || []) as Array<
+        Record<string, unknown>
+      >
+      if (body.username && users.length) {
+        const found = users.find(u => String(u.username) === body.username)
+        if (!found || body.password !== String(found.password || store.consolePassword)) {
+          return json(route, { detail: 'Invalid credentials' }, 401)
+        }
+        store.authenticated = true
+        ;(store as FakeStore & { currentUser?: unknown }).currentUser = {
+          ...found,
+          permissions: found.permissions || [],
+        }
+        return json(route, {
+          login_required: true,
+          authenticated: true,
+          token: store.token,
+          csrf_token: 'e2e-csrf',
+          user: found,
+        })
       }
       if (body.password !== store.consolePassword) {
         return json(route, { detail: 'invalid password' }, 401)
@@ -306,12 +396,93 @@ export async function installFakeBackend(
         login_required: true,
         authenticated: true,
         token: store.token,
+        csrf_token: 'e2e-csrf',
         ttl_minutes: 480,
+        user: {
+          actor_type: 'console_legacy',
+          role: 'owner',
+          permissions: ['users:read', 'users:write', 'agents:admin', 'tasks:create'],
+        },
       })
     }
     if (path.endsWith('/auth/logout') && method === 'POST') {
       store.authenticated = false
-      return json(route, { ok: true })
+      return json(route, { authenticated: false })
+    }
+    if (path.endsWith('/users') && method === 'GET') {
+      return json(route, {
+        users: (store as FakeStore & { users?: unknown[] }).users || [],
+      })
+    }
+    if (path.endsWith('/users') && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      const user = {
+        id: `user-${Date.now()}`,
+        username: body.username,
+        display_name: body.display_name || body.username,
+        role: body.role || 'operator',
+        status: 'active',
+        password: body.password,
+        permissions:
+          body.role === 'viewer'
+            ? ['audit:read_own', 'sessions:manage_own', 'password:change_own']
+            : [
+                'audit:read_own',
+                'sessions:manage_own',
+                'password:change_own',
+                'agents:create',
+                'kb:create',
+                'tasks:create',
+              ],
+      }
+      const bucket = (store as FakeStore & { users?: unknown[] })
+      bucket.users = [...(bucket.users || []), user]
+      return json(route, user, 201)
+    }
+    if (path.includes('/users/') && path.endsWith('/revoke-sessions') && method === 'POST') {
+      const id = path.split('/users/')[1]?.split('/')[0]
+      const revoked = (store as FakeStore & { revokedUsers?: string[] })
+      revoked.revokedUsers = [...(revoked.revokedUsers || []), String(id)]
+      return json(route, { ok: true, revoked: 1 })
+    }
+    if (path.includes('/acl/agents/') && method === 'GET') {
+      const agentId = path.split('/acl/agents/')[1]
+      const grants = ((store as FakeStore & { agentGrants?: Record<string, unknown[]> }).agentGrants || {})[
+        agentId
+      ] || []
+      return json(route, {
+        resource_type: 'agent',
+        resource_id: agentId,
+        owner_user_id: 'owner-1',
+        visibility: 'private',
+        grants,
+      })
+    }
+    if (path.includes('/acl/agents/') && path.endsWith('/grants') && method === 'POST') {
+      const agentId = path.split('/acl/agents/')[1]?.replace(/\/grants$/, '')
+      const body = request.postDataJSON() as { user_id: string; level: string }
+      const bucket = (store as FakeStore & { agentGrants?: Record<string, unknown[]> })
+      bucket.agentGrants = bucket.agentGrants || {}
+      bucket.agentGrants[agentId] = [
+        ...(bucket.agentGrants[agentId] || []),
+        { user_id: body.user_id, level: body.level },
+      ]
+      return json(route, {
+        resource_type: 'agent',
+        resource_id: agentId,
+        owner_user_id: 'owner-1',
+        visibility: 'private',
+        grants: bucket.agentGrants[agentId],
+      })
+    }
+    if (path.includes('/acl/agents/') && path.includes('/visibility') && method === 'PUT') {
+      return json(route, {
+        resource_type: 'agent',
+        resource_id: 'x',
+        owner_user_id: 'owner-1',
+        visibility: (request.postDataJSON() as { visibility: string }).visibility,
+        grants: [],
+      })
     }
 
     // ----- agents / sessions / monitor stubs -----
@@ -1328,6 +1499,13 @@ export async function installFakeBackend(
       return json(route, tasks)
     }
     if (path.endsWith('/tasks') && method === 'POST') {
+      const role = String(store.currentUser?.role || '')
+      if (role === 'viewer') {
+        return json(route, { detail: 'Not found' }, 404)
+      }
+      if (store.revokedUsers?.includes(String(store.currentUser?.id || ''))) {
+        return json(route, { detail: 'Unauthorized' }, 401)
+      }
       const body = request.postDataJSON() as {
         title: string
         prompt: string

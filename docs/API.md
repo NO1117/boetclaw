@@ -17,12 +17,13 @@
 
 ### 1.2 鉴权与限流
 
-- 当 `API_TOKEN` 和 `CONSOLE_PASSWORD` 都为空时，API 默认开放。
-- 配置后可使用 `Authorization: Bearer <API_TOKEN|Console JWT>`、`X-API-Token: <API_TOKEN>` 或 Console JWT cookie。
+- 无用户且 `API_TOKEN`/`CONSOLE_PASSWORD` 都为空时为开放模式。
+- 团队身份：`/auth/bootstrap`、`/auth/login`（用户名+密码，兼容仅密码）、`/auth/me`、会话撤销、`/users/*`、`/acl/*`、`/audit`。
+- 配置后可使用 `Authorization: Bearer <API_TOKEN|Session JWT>`、`X-API-Token` 或 HttpOnly Cookie；Cookie 写请求需 `X-CSRF-Token`。
 - `/api/v1/auth/*`、`/api/v1/monitor/health` 与 `/api/v1/gateway/*/webhook` 豁免中间件鉴权和限流。
 - 其余 `/api/v1/*` 进入 `ApiSecurityMiddleware`。渠道 webhook 改由各平台 `verify_signature` 鉴权（见 CHANNELS/SECURITY）；未配置平台密钥时放行并返回 `signature=skipped`。
-- `API_RATE_LIMIT_PER_MINUTE>0` 时，按 token 摘要优先、客户端 IP 兜底限流；超限返回 429（webhook 路径已豁免）。
-- Pydantic 校验失败通常返回 422；路由按业务返回 400/401/404/409/429/500/503。
+- `API_RATE_LIMIT_PER_MINUTE>0` 时，按 actor/token 摘要优先、客户端 IP 兜底限流；超限返回 429（webhook 路径已豁免）。
+- Pydantic 校验失败通常返回 422；路由按业务返回 400/401/403/404/409/429/500/503。
 
 ### 1.3 常用模型
 
@@ -86,9 +87,14 @@
 
 | 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
 |---|---|---|---|---|
-| `GET` | `/api/v1/auth/status` | 查询是否需要登录及当前 Token 状态 | Header/cookie 可带 Token → `{login_required,authenticated,expires_in_minutes}` | FUN-064、FUN-066 |
-| `POST` | `/api/v1/auth/login` | Console 密码登录 | `{password}` → `{login_required,authenticated,token,expires_in_minutes}`，并写 HttpOnly cookie；错误密码 401 | FUN-066 |
-| `POST` | `/api/v1/auth/logout` | 清理 Console cookie | → `{authenticated:false}` | FUN-066 |
+| `GET` | `/api/v1/auth/status` | 登录/开放/bootstrap 状态 | → `{login_required,authenticated,open_mode,bootstrap_needed,user?}` | FUN-066 |
+| `POST` | `/api/v1/auth/bootstrap` | 创建首个 owner | `{username,password,display_name?,bootstrap_token?}` → 会话+csrf | FUN-066 |
+| `POST` | `/api/v1/auth/login` | 用户名+密码登录（兼容仅 password） | → token/csrf/user；失败 401/429 | FUN-066 |
+| `POST` | `/api/v1/auth/logout` | 注销当前会话 | → `{authenticated:false}` | FUN-066 |
+| `GET` | `/api/v1/auth/me` | 当前用户与权限集合 | 不含密码/密钥 | FUN-066 |
+| `GET/POST/PATCH/DELETE` | `/api/v1/users*` | 用户管理 | owner/admin；最后 owner 受事务保护 | FUN-066 |
+| `GET/PUT/POST/DELETE` | `/api/v1/acl/*` | Agent/KB 可见范围与授权 | private/workspace + viewer/editor/runner | FUN-066 |
+| `GET` | `/api/v1/audit` | 审计查询（cursor） | owner/admin；`mine=true` 看自己 | FUN-066 |
 
 ## 4. 后台任务（持久化队列）
 

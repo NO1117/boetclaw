@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.multi_agent_manager import multi_agent_manager
@@ -68,12 +68,23 @@ def _raise_validation_error(exc: ProfileValidationError) -> None:
 
 
 @router.get("")
-async def list_agents():
-    return {"agents": [ws.to_dict() for ws in multi_agent_manager.list_agents()]}
+async def list_agents(request: Request):
+    from app.identity.actor import require_actor
+    from app.identity.resource_acl import filter_agents_for_actor
+
+    actor = require_actor(request)
+    agents = multi_agent_manager.list_agents()
+    allowed = set(filter_agents_for_actor(actor, [ws.agent_id for ws in agents]))
+    return {"agents": [ws.to_dict() for ws in agents if ws.agent_id in allowed]}
 
 
 @router.post("")
-async def create_agent(body: CreateAgentRequest):
+async def create_agent(body: CreateAgentRequest, request: Request):
+    from app.identity.actor import require_permission
+    from app.identity.permissions import AGENTS_CREATE
+    from app.identity.service import identity_service
+
+    actor = require_permission(request, AGENTS_CREATE)
     try:
         ws = multi_agent_manager.create(body.agent_id, body.config)
         if body.profile:
@@ -82,6 +93,12 @@ async def create_agent(body: CreateAgentRequest):
                 body.profile,
                 expected_revision=profile_service.get_or_create(body.agent_id).revision,
             )
+        identity_service.ensure_resource(
+            "agent",
+            body.agent_id,
+            owner_user_id=actor.user_id if actor.is_user else "",
+            visibility="workspace",
+        )
         return ws.to_dict()
     except ProfileSecurityError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -110,7 +127,10 @@ async def agent_profile_metrics():
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str):
+async def get_agent(agent_id: str, request: Request):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="viewer")
     ws = multi_agent_manager.get_workspace(agent_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -118,7 +138,10 @@ async def get_agent(agent_id: str):
 
 
 @router.get("/{agent_id}/files")
-async def list_agent_files(agent_id: str):
+async def list_agent_files(agent_id: str, request: Request):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="viewer")
     ws = multi_agent_manager.get_workspace(agent_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -141,7 +164,10 @@ async def list_agent_files(agent_id: str):
 
 
 @router.get("/{agent_id}/history")
-async def agent_history(agent_id: str, limit: int = 50):
+async def agent_history(agent_id: str, request: Request, limit: int = 50):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="viewer")
     ws = multi_agent_manager.get_workspace(agent_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -191,9 +217,13 @@ async def agent_history(agent_id: str, limit: int = 50):
 @router.delete("/{agent_id}")
 async def delete_agent(
     agent_id: str,
+    request: Request,
     purge: bool = Query(False, description="true 时删除工作区目录并清理 checkpoint"),
     body: DeleteAgentBody | None = Body(None),
 ):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="editor")
     do_purge = purge or (body.purge if body is not None else False)
     try:
         ok = await multi_agent_manager.delete(agent_id, purge=do_purge)
@@ -217,7 +247,10 @@ async def delete_agent(
 
 
 @router.get("/{agent_id}/profile")
-async def get_agent_profile(agent_id: str):
+async def get_agent_profile(agent_id: str, request: Request):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="viewer")
     ws = multi_agent_manager.get_workspace(agent_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -228,7 +261,10 @@ async def get_agent_profile(agent_id: str):
 
 
 @router.put("/{agent_id}/profile")
-async def update_agent_profile(agent_id: str, body: ProfileUpdateRequest):
+async def update_agent_profile(agent_id: str, body: ProfileUpdateRequest, request: Request):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, agent_id, required="editor")
     ws = multi_agent_manager.get_workspace(agent_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="agent not found")

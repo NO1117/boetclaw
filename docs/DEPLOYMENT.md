@@ -203,9 +203,12 @@ OPENAI_BASE_URL=http://<可从后端访问的主机>:8001/v1
 CORS_ORIGINS=https://console.example.com
 API_TOKEN=<随机长令牌>
 API_RATE_LIMIT_PER_MINUTE=<正整数>
-CONSOLE_PASSWORD=<强密码>
+CONSOLE_PASSWORD=<强密码，迁移期兼容；团队启用后建议移除>
 CONSOLE_JWT_SECRET=<独立随机长密钥>
 CONSOLE_JWT_TTL_MINUTES=60
+CONSOLE_COOKIE_SECURE=true
+BOOTSTRAP_TOKEN=<可选，非本机 bootstrap 时必填>
+# IDENTITY_SQLITE_PATH 默认 workspace/identity/identity.sqlite3（需持久化卷）
 TOOL_GUARD_ENABLED=true
 TOOL_GUARD_LEVEL=smart
 CHECKPOINT_BACKEND=sqlite
@@ -222,7 +225,7 @@ BOETCLAW_MASTER_KEY=
 还应：
 
 - 只暴露必要端口和路径，对 `/docs`、`/openapi.json`、管理 API、`/ui/` 增加边界访问控制。
-- 使用 HTTPS；当前 Console Cookie 未设置 `Secure`，应在上线前补强并验证。
+- 使用 HTTPS；生产设置 `CONSOLE_COOKIE_SECURE=true`，并持久化 `workspace/identity/`（用户/会话/ACL/审计库）。
 - 为启用渠道设置非空用户白名单，并在代理或应用层补齐平台 webhook 签名校验。
 - 使用 secrets manager 或受控挂载提供密钥（含 `BOETCLAW_MASTER_KEY` 与 Provider API Key），
   不把真实 `backend/.env` 烘焙进镜像或提交仓库。

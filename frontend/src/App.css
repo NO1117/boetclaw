@@ -2212,3 +2212,23 @@
   width: 100%;
   margin: var(--space-3) 0;
 }
+
+.open-mode-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--warning, #b45309);
+}
+.user-menu { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+.user-menu-name { color: var(--text-primary); font-weight: 600; }
+.team-create-form, .resource-access-panel, .team-user-table { margin-top: 16px; }
+.team-create-form { display: grid; gap: 8px; max-width: 420px; }
+.team-user-table { width: 100%; border-collapse: collapse; }
+.team-user-table th, .team-user-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.team-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.grant-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }

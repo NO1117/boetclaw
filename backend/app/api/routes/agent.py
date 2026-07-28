@@ -56,7 +56,9 @@ def _sse(prepared: PreparedChat, event: str, data: object) -> dict[str, str]:
 async def chat(request: Request, body: ChatRequest):
     from app.agents.runtime import invoke_agent
     from app.i18n import reset_lang, set_lang
+    from app.identity.resource_acl import require_agent_access
 
+    require_agent_access(request, body.agent_id or "default", required="runner")
     try:
         prepared = await prepare_chat(
             message=body.message,
@@ -158,6 +160,9 @@ async def plan_history(agent_id: str = "", thread_id: str = "", limit: int = 100
 
 @router.post("/chat/stream")
 async def chat_stream(request: Request, body: ChatRequest):
+    from app.identity.resource_acl import require_agent_access
+
+    require_agent_access(request, body.agent_id or "default", required="runner")
     try:
         prepared = await prepare_chat(
             message=body.message,

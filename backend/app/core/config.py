@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     console_password: str = ""
     console_jwt_secret: str = ""
     console_jwt_ttl_minutes: int = 480
+    console_cookie_secure: bool = False
+    bootstrap_token: str = ""
+    login_lock_base_seconds: int = 30
+    identity_sqlite_path: Path = Field(
+        default=BASE_DIR / "workspace" / "identity" / "identity.sqlite3"
+    )
 
     # Paths
     workspace_dir: Path = Field(default=BASE_DIR / "workspace")

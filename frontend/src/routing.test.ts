@@ -8,6 +8,7 @@ describe('parseRoute', () => {
     expect(parseRoute('/agents/workspace-a')).toEqual({ page: 'agents', agentId: 'workspace-a' })
     expect(parseRoute('/trace/trace-1')).toEqual({ page: 'trace', traceId: 'trace-1' })
     expect(parseRoute('/settings/security')).toEqual({ page: 'settings', settingsTab: 'security' })
+    expect(parseRoute('/settings/team')).toEqual({ page: 'settings', settingsTab: 'team' })
   })
 
   it('旧领域路由进入 removed 页面', () => {

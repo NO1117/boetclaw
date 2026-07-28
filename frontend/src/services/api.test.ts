@@ -77,8 +77,12 @@ describe('恢复和领域 API 请求', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/domain/reports/report-1', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify({ summary: '已更新' }),
+      credentials: 'include',
     }))
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/domain/reports/report-1', { method: 'DELETE' })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/domain/reports/report-1', expect.objectContaining({
+      method: 'DELETE',
+      credentials: 'include',
+    }))
   })
 
   it('会话删除使用正确请求契约', async () => {
@@ -86,7 +90,10 @@ describe('恢复和领域 API 请求', () => {
 
     await deleteChatSession('thread-1')
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/agent/sessions/thread-1', { method: 'DELETE' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/agent/sessions/thread-1',
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+    )
   })
 
   it('会话归档与列表过滤使用正确请求契约', async () => {
@@ -99,9 +106,17 @@ describe('恢复和领域 API 请求', () => {
     await unarchiveChatSession('thread-1')
     await fetchChatSessions('well', 20, { archivedOnly: true })
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/agent/sessions/thread-1/archive', { method: 'POST' })
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/agent/sessions/thread-1/unarchive', { method: 'POST' })
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/agent/sessions?q=well&limit=20&archived_only=true')
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/agent/sessions/thread-1/archive', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/agent/sessions/thread-1/unarchive', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/agent/sessions?q=well&limit=20&archived_only=true', expect.objectContaining({
+      credentials: 'include',
+    }))
   })
 
   it('产物删除使用正确请求契约并编码文件名', async () => {
@@ -109,7 +124,10 @@ describe('恢复和领域 API 请求', () => {
 
     await deleteArtifact('chart', 'demo chart.png')
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/files/artifacts/chart/demo%20chart.png', { method: 'DELETE' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/files/artifacts/chart/demo%20chart.png',
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+    )
   })
 
   it('产物列表保留 sha256 字段', async () => {
@@ -134,17 +152,20 @@ describe('恢复和领域 API 请求', () => {
     const data = await fetchArtifacts('code')
 
     expect(data.artifacts[0].sha256).toBe('abc123')
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/files/artifacts?kind=code')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/files/artifacts?kind=code',
+      expect.objectContaining({ credentials: 'include' }),
+    )
   })
 
-  it('鉴权错误保留服务端可见信息和 token', async () => {
-    localStorage.setItem('boetclaw_console_token', 'token-1')
+  it('鉴权错误保留服务端可见信息', async () => {
     fetchMock.mockResolvedValueOnce(mockText('认证已过期', 401))
 
     await expect(fetchConsoleAuthStatus()).rejects.toThrow('认证已过期')
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/status', {
-      headers: { Authorization: 'Bearer token-1' },
-    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/auth/status',
+      expect.objectContaining({ credentials: 'include' }),
+    )
   })
 
   it('网络错误向调用方传播', async () => {

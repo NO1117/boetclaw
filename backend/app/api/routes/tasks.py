@@ -123,37 +123,67 @@ def _schedule_task(task_id: str) -> None:
 
 
 @router.post("", response_model=TaskResponse, status_code=201)
-async def create_task(request: TaskCreateRequest):
+async def create_task(body: TaskCreateRequest, request: Request):
+    from app.identity.actor import require_permission
+    from app.identity.permissions import TASKS_CREATE
+    from app.identity.resource_acl import require_agent_access
+
+    actor = require_permission(request, TASKS_CREATE)
+    agent_id = body.agent_id or str((body.metadata or {}).get("agent_id") or "default")
+    require_agent_access(request, agent_id, required="runner")
     existing = None
-    if request.idempotency_key:
-        existing_record = task_scheduler.service.store.find_by_idempotency_key(request.idempotency_key)
+    if body.idempotency_key:
+        existing_record = task_scheduler.service.store.find_by_idempotency_key(body.idempotency_key)
         if existing_record:
             existing = Task.from_record(existing_record)
     if existing:
         return _to_response(existing)
+    metadata = dict(body.metadata or {})
+    if actor.is_user:
+        metadata.setdefault("created_by_user_id", actor.user_id)
     task = task_scheduler.create(
-        title=request.title,
-        prompt=request.prompt,
-        gateway=request.gateway,
-        gateway_user=request.gateway_user,
-        metadata=request.metadata,
-        auto_run=request.auto_run,
-        scheduled_at=request.scheduled_at,
-        priority=request.priority,
-        max_attempts=request.max_attempts,
-        idempotency_key=request.idempotency_key,
-        agent_id=request.agent_id,
+        title=body.title,
+        prompt=body.prompt,
+        gateway=body.gateway,
+        gateway_user=body.gateway_user,
+        metadata=metadata,
+        auto_run=body.auto_run,
+        scheduled_at=body.scheduled_at,
+        priority=body.priority,
+        max_attempts=body.max_attempts,
+        idempotency_key=body.idempotency_key,
+        agent_id=body.agent_id,
     )
-    if request.auto_run and not request.scheduled_at:
+    if body.auto_run and not body.scheduled_at:
         _schedule_task(task.id)
     return _to_response(task)
 
 
 @router.get("", response_model=list[TaskResponse])
-async def list_tasks_legacy(status: str | None = None):
+async def list_tasks_legacy(request: Request, status: str | None = None):
+    from app.identity.actor import require_actor
+    from app.identity.permissions import TASKS_ADMIN
+    from app.identity.resource_acl import can_access_agent
+
+    actor = require_actor(request)
     task_status = TaskStatus(status) if status else None
     tasks = task_scheduler.list_tasks(task_status)
-    return [_to_response(t) for t in tasks]
+    if actor.has(TASKS_ADMIN) or actor.role in {"owner", "admin"} or actor.actor_type in {
+        "open",
+        "api_token",
+        "console_legacy",
+    }:
+        return [_to_response(t) for t in tasks]
+    filtered = []
+    for t in tasks:
+        created_by = str(t.metadata.get("created_by_user_id", ""))
+        if created_by and created_by == actor.user_id:
+            filtered.append(t)
+            continue
+        agent_id = str(t.metadata.get("agent_id", t.agent_id or "default"))
+        if can_access_agent(actor, agent_id, required="viewer"):
+            filtered.append(t)
+    return [_to_response(t) for t in filtered]
 
 
 @router.get("/list", response_model=TaskListResponse)
@@ -230,30 +260,46 @@ async def task_events_stream(
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str):
+def _require_task(request: Request, task_id: str, *, write: bool = False):
+    from app.identity.resource_acl import require_task_access
+
     task = task_scheduler.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    agent_id = str(task.metadata.get("agent_id", task.agent_id or "default"))
+    created_by = str(task.metadata.get("created_by_user_id", ""))
+    require_task_access(
+        request,
+        created_by_user_id=created_by,
+        agent_id=agent_id,
+        write=write,
+    )
+    return task
+
+
+@router.get("/{task_id}", response_model=TaskResponse)
+async def get_task(task_id: str, request: Request):
+    task = _require_task(request, task_id, write=False)
     return _to_response(task)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, request: TaskUpdateRequest):
+async def update_task(task_id: str, body: TaskUpdateRequest, request: Request):
+    _require_task(request, task_id, write=True)
     fields: dict[str, Any] = {}
-    if request.title is not None:
-        fields["title"] = request.title
-    if request.prompt is not None:
-        fields["prompt"] = request.prompt
-    if request.priority is not None:
-        fields["priority"] = request.priority
-    if request.scheduled_at is not None:
-        fields["scheduled_at"] = request.scheduled_at
-    if request.max_attempts is not None:
-        fields["max_attempts"] = request.max_attempts
-    if request.metadata is not None:
-        fields["metadata"] = request.metadata
-    updated = task_scheduler.service.update_task(task_id, revision=request.revision, fields=fields)
+    if body.title is not None:
+        fields["title"] = body.title
+    if body.prompt is not None:
+        fields["prompt"] = body.prompt
+    if body.priority is not None:
+        fields["priority"] = body.priority
+    if body.scheduled_at is not None:
+        fields["scheduled_at"] = body.scheduled_at
+    if body.max_attempts is not None:
+        fields["max_attempts"] = body.max_attempts
+    if body.metadata is not None:
+        fields["metadata"] = body.metadata
+    updated = task_scheduler.service.update_task(task_id, revision=body.revision, fields=fields)
     if not updated:
         current = task_scheduler.get(task_id)
         if not current:
@@ -263,26 +309,22 @@ async def update_task(task_id: str, request: TaskUpdateRequest):
 
 
 @router.get("/{task_id}/attempts", response_model=list[TaskAttemptResponse])
-async def list_attempts(task_id: str):
-    if not task_scheduler.get(task_id):
-        raise HTTPException(status_code=404, detail="Task not found")
+async def list_attempts(task_id: str, request: Request):
+    _require_task(request, task_id, write=False)
     attempts = task_scheduler.service.list_attempts(task_id)
     return [TaskAttemptResponse(**attempt.to_dict()) for attempt in attempts]
 
 
 @router.get("/{task_id}/events", response_model=list[TaskEventResponse])
-async def list_task_events(task_id: str, after_id: int = Query(default=0, ge=0)):
-    if not task_scheduler.get(task_id):
-        raise HTTPException(status_code=404, detail="Task not found")
+async def list_task_events(task_id: str, request: Request, after_id: int = Query(default=0, ge=0)):
+    _require_task(request, task_id, write=False)
     events = task_scheduler.service.list_events(task_id=task_id, after_id=after_id)
     return [TaskEventResponse(**event.to_dict()) for event in events]
 
 
 @router.post("/{task_id}/run", response_model=TaskResponse)
-async def run_task(task_id: str):
-    task = task_scheduler.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def run_task(task_id: str, request: Request):
+    task = _require_task(request, task_id, write=True)
     if task.status in {TaskStatus.RUNNING, TaskStatus.CANCELLING, TaskStatus.LEASED} or (
         task.status == TaskStatus.PENDING and bool(task.run_id)
     ):
@@ -293,10 +335,8 @@ async def run_task(task_id: str):
 
 
 @router.post("/{task_id}/cancel", response_model=TaskResponse)
-async def cancel_task(task_id: str):
-    task = task_scheduler.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def cancel_task(task_id: str, request: Request):
+    task = _require_task(request, task_id, write=True)
     if task.status == TaskStatus.CANCELLED:
         return _to_response(task)
     if task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.DEAD_LETTER}:
@@ -323,7 +363,8 @@ async def cancel_task(task_id: str):
 
 
 @router.post("/{task_id}/requeue", response_model=TaskResponse)
-async def requeue_task(task_id: str):
+async def requeue_task(task_id: str, request: Request):
+    _require_task(request, task_id, write=True)
     task = task_scheduler.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
