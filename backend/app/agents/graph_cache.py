@@ -173,10 +173,23 @@ class AgentGraphCache:
             logger.info("graph_cache_invalidate_provider", provider=provider, removed=len(to_delete))
         return len(to_delete)
 
-    def register_key_meta(self, key: str, *, agent_id: str, provider: str) -> None:
+    def invalidate_connection(self, connection_id: str) -> int:
+        meta_map: dict[str, dict[str, str]] = getattr(self, "_key_meta", {})
+        to_delete = [k for k, m in meta_map.items() if m.get("connection_id") == connection_id]
+        for key in to_delete:
+            self._entries.pop(key, None)
+            meta_map.pop(key, None)
+        if to_delete:
+            logger.info("graph_cache_invalidate_connection", connection_id=connection_id, removed=len(to_delete))
+        return len(to_delete)
+
+    def register_key_meta(self, key: str, *, agent_id: str, provider: str, connection_id: str = "") -> None:
         if not hasattr(self, "_key_meta"):
             self._key_meta: dict[str, dict[str, str]] = {}
-        self._key_meta[key] = {"agent_id": agent_id, "provider": provider}
+        meta: dict[str, str] = {"agent_id": agent_id, "provider": provider}
+        if connection_id:
+            meta["connection_id"] = connection_id
+        self._key_meta[key] = meta
 
     def purge_expired(self) -> int:
         now = time.monotonic()

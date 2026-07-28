@@ -1,6 +1,6 @@
 # 测试说明
 
-> 文档基线：2026-07-20。
+> 文档基线：2026-07-28。
 
 ## 当前基线
 
@@ -38,7 +38,8 @@
 | `test_phase3_security.py` | 14 | ToolGuard guardian、策略级别、中间件、审批持久化 |
 | `test_phase4_skills.py` | 7 | skill frontmatter、静态扫描、技能池和治理路由 |
 | `test_phase5_agents.py` | 4 | 路由优先级、多 Agent 隔离、并发懒加载 |
-| `test_phase6_providers.py` | 12 | provider 管理、模型配置、能力缓存、provider 限流 |
+| `test_phase6_providers.py` | 13 | provider 管理、模型配置、能力缓存、provider 限流、配置路由不写明文 `.env` |
+| `test_provider_credential_vault.py` | 14 | 保险箱加解密/篡改/轮换、无主密钥降级、连接 CRUD/409、env 导入不删 `.env`、日志脱敏、validate-only |
 | `test_phase7_memory.py` | 7 | 记忆来源策略、存储后端、上下文摘要 |
 | `test_phase8_channels.py` | 9 | 四渠道解析、渲染、队列满和消费者 |
 | `test_phase9_scheduler.py` | 7 | cron/heartbeat、来源隔离、失败历史 |
@@ -84,6 +85,8 @@ Windows PowerShell：
 cd backend
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m pytest tests\test_phase3_security.py
+.\.venv\Scripts\python.exe -m pytest tests\test_provider_credential_vault.py
+.\.venv\Scripts\python.exe -m pytest tests\test_phase6_providers.py -k "persist_api_key or config_routes"
 .\.venv\Scripts\python.exe -m pytest -k "gateway"
 .\.venv\Scripts\python.exe -m pytest --collect-only
 ```
@@ -94,9 +97,44 @@ Linux/macOS：
 cd backend
 .venv/bin/python -m pytest
 .venv/bin/python -m pytest tests/test_phase3_security.py
+.venv/bin/python -m pytest tests/test_provider_credential_vault.py
+.venv/bin/python -m pytest tests/test_phase6_providers.py -k "persist_api_key or config_routes"
 .venv/bin/python -m pytest -k gateway
 .venv/bin/python -m pytest --collect-only
 ```
+
+Provider 凭据保险箱与连接管理（专项，需 `conftest.py` 注入临时 `BOETCLAW_MASTER_KEY`）：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests\test_provider_credential_vault.py -v
+.\.venv\Scripts\python.exe -m pytest tests\test_phase6_providers.py::test_provider_config_routes_do_not_persist_api_key_to_env -v
+```
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_provider_credential_vault.py -v
+.venv/bin/python -m pytest tests/test_phase6_providers.py::test_provider_config_routes_do_not_persist_api_key_to_env -v
+```
+
+**覆盖要点**（`test_provider_credential_vault.py`）：
+
+- 加解密往返、密文篡改检测、主密钥轮换后仍可解密
+- 未配置主密钥时 vault 写入禁用（503），环境变量 Provider 仍 `is_configured`
+- 连接创建/列表不泄漏 `api_key`；revision 冲突与默认连接引用删除保护（409）
+- `import-env` 不修改 `.env` 且 `env_cleanup_required`
+- Provider 配置 PUT 不写明文到 `.env`；`validate_only` 不落盘
+- `redact_text` / `emit_event` 不包含完整密钥
+
+前端 Provider 连接（Vitest，`ProviderSettings.test.tsx`）：
+
+```bash
+cd frontend
+npm test -- --run ProviderSettings
+```
+
+- 列表/编辑不回填 API Key；创建后清空密钥字段
+- 保险箱未配置提示；导入 env 响应；连接检测与保存错误展示
 
 前端测试与生产构建：
 
@@ -204,6 +242,7 @@ PYTHONPATH=. python scripts/export_openapi.py
 - 插件动态导入未在 OS/容器沙箱中测试。
 - 消息历史重启后不保留 `_message` 对象，因此持久化记录的重试能力未覆盖为可用能力。
 - 外部 provider、MCP、OTel exporter 的故障注入和长时间稳定性测试有限。
+- 保险箱默认 E2E 使用 fake backend 路由，不验证真实 AES 磁盘文件；真实主密钥 + vault 文件权限需在部署验收中手工确认。
 
 ## 建议验收用例
 

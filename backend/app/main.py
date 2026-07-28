@@ -25,6 +25,7 @@ from app.api.routes import (
     monitor,
     plugins,
     providers,
+    provider_connections,
     security,
     skills,
     tasks,
@@ -111,6 +112,7 @@ app.include_router(attachments.router, prefix=API_PREFIX)
 app.include_router(knowledge_bases.router, prefix=API_PREFIX)
 app.include_router(memories.router, prefix=API_PREFIX)
 app.include_router(providers.router, prefix=API_PREFIX)
+app.include_router(provider_connections.router, prefix=API_PREFIX)
 app.include_router(voice.router, prefix=API_PREFIX)
 app.include_router(plugins.router, prefix=API_PREFIX)
 app.include_router(plugins.commands_router, prefix=API_PREFIX)

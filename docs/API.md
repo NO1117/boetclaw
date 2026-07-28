@@ -150,21 +150,36 @@ Cron 使用 UTC。Job 配置落盘于 `cron_jobs.json`；运行历史落盘于 `
 | `POST` | `/api/v1/skills/scan` | 扫描任意给定服务器目录 | `{path}` → `{safe,findings}` | FUN-043 |
 | `POST` | `/api/v1/skills/reload` | 重建 Agent 使技能生效 | body 可省略或 `{agent_id?}` → `{reloaded,agents}` | FUN-044 |
 
-## 8. Provider
+## 8. Provider 与模型连接
 
-`name` 当前注册值为 `openai`、`anthropic`、`ollama`。
+`name` 兼容值为 `openai`、`anthropic`、`ollama`；新连接使用 `conn_*` ID。API Key 经 AES-256-GCM 保险箱存储，需 `BOETCLAW_MASTER_KEY`（32 字节，仅环境变量）。
 
-| 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
-|---|---|---|---|---|
-| `GET` | `/api/v1/providers` | Provider 列表 | → `{providers:[]}` | FUN-026 |
-| `GET` | `/api/v1/providers/config` | 当前默认 Provider/模型 | → `{provider,model}` | FUN-027 |
-| `PUT` | `/api/v1/providers/default` | 修改默认 Provider/模型并写 `.env` | `{provider,model}` → 同结构 | FUN-027 |
-| `GET` | `/api/v1/providers/{name}/config` | 获取非敏感配置状态 | → `{name,api_key_configured,base_url,is_default,default_model}` | FUN-027 |
-| `PUT` | `/api/v1/providers/{name}/config` | 修改 API Key/base URL 并写 `.env` | `{api_key?,base_url?}` → 配置状态 | FUN-027 |
-| `GET` | `/api/v1/providers/{name}/models` | 模型列表 | → `{models:[]}` | FUN-027 |
-| `POST` | `/api/v1/providers/{name}/check` | 连通性检查 | 无 body → Provider 检查结果 | FUN-027 |
+### 8.1 兼容 Provider 路由
 
-更新默认值不会显式重建所有已创建 Agent；需要结合相应重载/重启流程验证运行时生效。
+| 方法 | 完整路径 | 用途 | 主要请求/响应 |
+|---|---|---|---|
+| `GET` | `/api/v1/providers` | Provider 类型列表 | → `{providers:[]}` |
+| `GET` | `/api/v1/providers/config` | 当前默认 | → `{provider,model,connection_id?}` |
+| `PUT` | `/api/v1/providers/default` | 修改默认（不写 API Key 到 `.env`） | `{provider,model}` |
+| `GET` | `/api/v1/providers/{name}/config` | 非敏感状态（无密钥回填） | 含 `credential_source`、`credential_fingerprint` |
+| `PUT` | `/api/v1/providers/{name}/config` | 保存至保险箱 | `{api_key?,base_url?}` |
+| `GET` | `/api/v1/providers/{name}/models` | 模型列表 | → `{models:[]}` |
+| `POST` | `/api/v1/providers/{name}/check` | 连通性检查 | 脱敏结果 |
+
+### 8.2 模型连接 API
+
+| 方法 | 完整路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v1/provider-connections/vault/status` | 保险箱状态 |
+| `GET` | `/api/v1/provider-connections` | 连接列表 |
+| `POST` | `/api/v1/provider-connections` | 创建（`validate_only` 可选） |
+| `PUT` | `/api/v1/provider-connections/{id}` | 更新（revision 冲突 409） |
+| `DELETE` | `/api/v1/provider-connections/{id}` | 删除（被引用 409） |
+| `POST` | `/api/v1/provider-connections/{id}/check` | 检测 |
+| `POST` | `/api/v1/provider-connections/{id}/set-default` | 设为默认 |
+| `POST` | `/api/v1/provider-connections/import-env` | 显式导入环境变量（提示手动清理 `.env`） |
+
+更新默认值不会显式重建所有已创建 Agent；进行中的运行保持连接快照。
 
 ## 9. ToolGuard 与审批
 

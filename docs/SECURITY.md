@@ -1,9 +1,10 @@
 # 安全说明
 
-> 文档基线：2026-07-16。
+> 文档基线：2026-07-28。
 
 本文描述当前代码已经实现的控制及其边界，不构成安全认证。主要事实来源为
-`backend/app/security/`、`backend/app/middleware/`、`backend/app/services/gateway/`、
+`backend/app/security/`、`backend/app/middleware/`、`backend/app/credentials/`、
+`backend/app/providers/connections/`、`backend/app/services/gateway/`、
 `backend/app/skills_system/scanner.py`、`backend/app/plugins/loader.py` 和对应测试。
 
 ## ToolGuard
@@ -156,10 +157,91 @@ ENABLED_PLUGINS=
 插件导入发生在后端进程内，没有进程、容器、文件系统或网络沙箱；启用插件等价于信任其 Python
 代码。上线前应固定来源和版本、人工审查、最小化容器权限，并在隔离环境验证。
 
+## Provider 凭据保险箱
+
+Provider API Key 可通过控制台写入本地 AES-256-GCM 保险箱（`backend/app/credentials/vault.py`），
+并与 Provider 连接配置分离（`backend/app/providers/connections/`）。实现边界如下。
+
+### 威胁边界与保护范围
+
+保险箱提供的是**单机、本地、静态加密存储**，不是云 KMS/HSM、多租户密钥托管或 OS 沙箱。
+
+- **保护对象**：磁盘上的 `workspace/credentials/vault.json` 中的 Provider API Key 密文；损坏文件会隔离到
+  `workspace/credentials/quarantine/`。
+- **不保护**：运行中的进程内存、已配置主密钥的环境、拥有 workspace 读权限的操作系统用户、
+  未清理的 `backend/.env` 明文、容器/备份介质上的副本。攻击者若同时获得 vault 文件与主密钥，可解密全部凭据。
+- **算法**：标准 AEAD（AES-256-GCM）；禁止依赖 Base64 伪加密或仓库内固定密钥。
+- **文件权限**：写入后尝试 `chmod 600`；仍须限制 workspace 目录的宿主/容器挂载权限。
+- **并发与持久化**：原子写入与进程内锁；无跨进程/多副本协调。多实例部署不应共享同一 vault 文件。
+
+### 主密钥（`BOETCLAW_MASTER_KEY`）
+
+主密钥**仅从环境变量**读取（`backend/app/credentials/master_key.py`），不写入仓库、
+不通过 API 下发、不持久化到 workspace。
+
+- **格式**：32 字节随机值，以标准或 URL-safe Base64（推荐）或 64 字符 hex 注入。
+- **生成**（在可信本机执行，将输出粘贴到部署环境，勿写入 git）：
+
+```powershell
+python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+```
+
+```bash
+python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+```
+
+- **注入**：本地开发可写入未提交的 `backend/.env`；生产应使用 secrets manager、
+  编排器 secret 或受控挂载，并限制仅 backend 进程可读。Docker Compose 通过 `backend/.env`
+  注入，**不得**把真实主密钥提交到镜像或版本库。
+- **轮换**：在应用运行且当前主密钥可解密的前提下，调用 vault 的 `rotate_master_key(new_key)` 重加密全部记录；
+  随后更新环境中的 `BOETCLAW_MASTER_KEY` 并重启进程（或 `clear_master_key_cache()` 后重载）。
+  轮换前必须备份 `vault.json`；用错误/旧主密钥启动时解密失败并返回 503，**不会**自动损坏或抹除密文。
+- **丢失主密钥**：无法恢复已加密凭据；只能从 Provider 控制台重新签发 API Key 并重新保存，或回退到环境变量凭据。
+
+### 无主密钥降级
+
+未配置 `BOETCLAW_MASTER_KEY` 时：
+
+- 保险箱**写入**（创建/替换连接中的 API Key、显式导入）禁用，API 返回 503 与可操作说明；
+- 已存在于 `OPENAI_API_KEY` 等环境变量中的凭据**仍可**用于聊天与连接检测；
+- 应用**不会**因此崩溃。生产若需控制台保存密钥，必须配置主密钥。
+
+### 环境变量导入与 `.env` 清理
+
+- 启动时**只读**兼容现有环境变量，**不会**自动改写或删除 `backend/.env`。
+- `POST /api/v1/provider-connections/import-env` 为显式一次性导入；成功响应含
+  `env_cleanup_required: true` 时，用户须**手动**从 `backend/.env` 删除对应明文 Key
+  （如 `OPENAI_API_KEY`）；系统不会伪称已删除。
+- 经 `/api/v1/providers/*/config` 保存的 API Key 只写保险箱，**不再**调用 `update_env_file` 写入明文。
+
+### 密钥不进日志 / API / Trace
+
+- 完整 API Key、Authorization 头、密文、nonce、主密钥不得出现在 REST 响应、OpenAPI 示例、
+  结构化日志、Trace/审计详情或测试快照中。
+- 连接 API 仅返回 `credential_configured`、`credential_source`（`vault` / `env` / `none`）
+  及末四位 `credential_fingerprint`（可安全取得时）。
+- `backend/app/credentials/redaction.py` 与 observability 事件路径会对常见密钥模式脱敏；
+  上游错误若含密钥，仍应视为不可信输入并依赖脱敏层。
+
+### 备份与恢复
+
+- **须一并保护**：`workspace/credentials/vault.json` 与当时有效的 `BOETCLAW_MASTER_KEY`。
+  仅有 vault 文件而无主密钥无法解密；仅有主密钥而无 vault 则无法恢复已存连接引用。
+- **建议**：备份整个 `workspace/`（含 `provider_connections.json`），加密存储、限制访问、
+  定期做恢复演练。恢复后确认 vault 状态 API 与一次连接检测。
+- **quarantine**：若 vault JSON 损坏，原文件会移入 quarantine；恢复需运维从备份还原或重建凭据。
+
+```env
+# 生产示例：占位，勿提交真实值
+BOETCLAW_MASTER_KEY=
+```
+
+详见 `docs/API.md` 中 Provider 连接与 `GET /api/v1/provider-connections/vault/status` 索引。
+
 ## 其他边界与生产要求
 
 - `source="cron"` 和 `source="heartbeat"` 默认不写长期记忆，可降低自动任务污染，但不是内容安全过滤。
-- `backend/.env`、workspace 中的审批/消息/任务历史和 provider 凭据都应按敏感数据保护。
+- `backend/.env`、workspace 中的审批/消息/任务历史、`workspace/credentials/` 与 provider 连接配置都应按敏感数据保护。
 - 收紧 `CORS_ORIGINS`，不要保留不需要的开发源。
 - 对外仅暴露必要路径；限制 `/docs`、`/openapi.json`、管理 API 和 `/ui/` 的访问。
 - 保持 `TOOL_GUARD_ENABLED=true`，不要把 `off` 用于生产。

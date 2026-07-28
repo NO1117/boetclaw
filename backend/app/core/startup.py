@@ -62,6 +62,15 @@ async def phase1_fast(app: Any) -> None:
 
     discover_and_load()
 
+    from app.providers.connections.service import connection_service
+
+    try:
+        connection_service.migrate_from_settings_if_empty()
+        app.state.connections_ready = True
+    except Exception as exc:  # noqa: BLE001
+        app.state.connections_ready = False
+        logger.error("connections_init_failed", error=str(exc))
+
     app.state.ready = True
     app.state.agent_ready = False
     elapsed_ms = (time.perf_counter() - t) * 1000

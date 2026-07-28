@@ -1,6 +1,6 @@
 # 部署说明
 
-> 文档基线：2026-07-17。
+> 文档基线：2026-07-28。
 
 本文按当前 `scripts/`、`Dockerfile`、`docker-compose.yml`、`deploy/nginx.conf` 和
 `backend/app/main.py` 描述部署行为。后端安装脚本明确接受 Python 3.11–3.13，
@@ -212,14 +212,20 @@ CHECKPOINT_BACKEND=sqlite
 CHECKPOINT_SQLITE_PATH=/app/workspace/checkpoints
 GATEWAY_RATE_LIMIT_PER_MINUTE=<正整数>
 ENABLED_PLUGINS=
+# 控制台经保险箱保存 Provider API Key 时必需（32 字节随机值，Base64/hex；勿提交真实值）
+BOETCLAW_MASTER_KEY=
 ```
+
+若使用控制台保存 Provider API Key（而非仅依赖 `OPENAI_API_KEY` 等环境变量），必须在部署环境中设置
+`BOETCLAW_MASTER_KEY` 并持久化 `workspace/credentials/`。生成方式与威胁边界见 `docs/SECURITY.md`。
 
 还应：
 
 - 只暴露必要端口和路径，对 `/docs`、`/openapi.json`、管理 API、`/ui/` 增加边界访问控制。
 - 使用 HTTPS；当前 Console Cookie 未设置 `Secure`，应在上线前补强并验证。
 - 为启用渠道设置非空用户白名单，并在代理或应用层补齐平台 webhook 签名校验。
-- 使用 secrets manager 或受控挂载提供密钥，不把真实 `backend/.env` 烘焙进镜像或提交仓库。
+- 使用 secrets manager 或受控挂载提供密钥（含 `BOETCLAW_MASTER_KEY` 与 Provider API Key），
+  不把真实 `backend/.env` 烘焙进镜像或提交仓库。
 - 仅启用审查过的插件/技能；当前插件与后端同进程执行，没有沙箱。
 - 以非 root、最小文件系统权限和受限出站网络运行。当前 Dockerfile 没有声明 `USER`，
   默认容器用户不是最小权限配置。

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.providers.base import ModelInfo, Provider
+from app.providers.connections.runtime import get_runtime_config
 
 
 class OllamaProvider(Provider):
@@ -14,13 +15,19 @@ class OllamaProvider(Provider):
     requires_api_key = False
     default_model = "qwen2.5"
 
+    def _base_url(self) -> str:
+        runtime = get_runtime_config()
+        if runtime and runtime.provider_type == self.name:
+            return runtime.base_url or settings.ollama_base_url
+        return settings.ollama_base_url
+
     def is_configured(self) -> bool:
-        return bool(settings.ollama_base_url)
+        return bool(self._base_url())
 
     def get_chat_model(self, model: str, **kwargs: Any) -> Any:
         from langchain_ollama import ChatOllama
 
-        return ChatOllama(model=model, base_url=settings.ollama_base_url, **kwargs)
+        return ChatOllama(model=model, base_url=self._base_url(), **kwargs)
 
     def list_models(self) -> list[ModelInfo]:
         """Query the local Ollama daemon for installed models."""
@@ -33,7 +40,7 @@ class OllamaProvider(Provider):
         try:
             import httpx
 
-            resp = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=2.0)
+            resp = httpx.get(f"{self._base_url()}/api/tags", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
             return [
@@ -48,7 +55,7 @@ class OllamaProvider(Provider):
         try:
             import httpx
 
-            resp = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=2.0)
+            resp = httpx.get(f"{self._base_url()}/api/tags", timeout=2.0)
             connected = resp.status_code == 200
             return {"provider": self.name, "connected": connected, "detail": f"HTTP {resp.status_code}"}
         except Exception as exc:  # noqa: BLE001

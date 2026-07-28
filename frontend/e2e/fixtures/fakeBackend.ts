@@ -45,6 +45,7 @@ export interface FakeStore {
   memoryHealth: Record<string, unknown>
   agentProfiles: Record<string, Record<string, unknown>>
   agentProfileVersions: Record<string, Array<Record<string, unknown>>>
+  providerConnections: Record<string, Record<string, unknown>>
   hangReleases: Array<() => void>
   releaseHangStreams: () => void
   reset: () => void
@@ -150,6 +151,26 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       default: [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
       'workspace-a': [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
     },
+    providerConnections: {
+      'conn-fake-default': {
+        id: 'conn-fake-default',
+        provider_type: 'fake',
+        display_name: 'Fake 默认连接',
+        base_url: '',
+        credential_id: null,
+        credential_configured: true,
+        credential_source: 'none',
+        credential_fingerprint: '',
+        default_model: 'fake-model',
+        enabled: true,
+        timeout_seconds: 30,
+        revision: 1,
+        is_default: true,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        last_check: null,
+      },
+    },
     memoryHealth: {
       status: 'ready',
       backend: 'sqlite',
@@ -189,6 +210,26 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.agentProfileVersions = {
         default: [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
         'workspace-a': [{ revision: 1, created_at: nowIso(), changed_fields: ['created'], operator: 'system' }],
+      }
+      store.providerConnections = {
+        'conn-fake-default': {
+          id: 'conn-fake-default',
+          provider_type: 'fake',
+          display_name: 'Fake 默认连接',
+          base_url: '',
+          credential_id: null,
+          credential_configured: true,
+          credential_source: 'none',
+          credential_fingerprint: '',
+          default_model: 'fake-model',
+          enabled: true,
+          timeout_seconds: 30,
+          revision: 1,
+          is_default: true,
+          created_at: nowIso(),
+          updated_at: nowIso(),
+          last_check: null,
+        },
       }
       store.authenticated = !store.loginRequired
       store.releaseHangStreams()
@@ -745,8 +786,112 @@ export async function installFakeBackend(
       })
       return
     }
+    if (path.endsWith('/provider-connections/vault/status')) {
+      return json(route, { configured: true, writable: true, credential_count: 0, message: '' })
+    }
+    if (path.endsWith('/provider-connections/import-env') && method === 'POST') {
+      return json(route, { imported_connection_ids: [], count: 0, env_cleanup_required: false, message: '无可导入项' })
+    }
+    if (path.endsWith('/provider-connections') && method === 'GET') {
+      return json(route, { connections: Object.values(store.providerConnections) })
+    }
+    if (path.endsWith('/provider-connections') && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      const id = `conn-e2e-${Object.keys(store.providerConnections).length + 1}`
+      const conn = {
+        id,
+        provider_type: String(body.provider_type ?? 'fake'),
+        display_name: String(body.display_name ?? 'E2E 连接'),
+        base_url: String(body.base_url ?? ''),
+        credential_id: body.api_key ? `cred-${id}` : null,
+        credential_configured: Boolean(body.api_key),
+        credential_source: body.api_key ? 'vault' : 'none',
+        credential_fingerprint: body.api_key ? 'e2e1' : '',
+        default_model: String(body.default_model ?? 'fake-model'),
+        enabled: body.enabled !== false,
+        timeout_seconds: 30,
+        revision: 1,
+        is_default: false,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        last_check: null,
+      }
+      store.providerConnections[id] = conn
+      return json(route, { connection: conn })
+    }
+    const connModelsMatch = path.match(/\/provider-connections\/([^/]+)\/models$/)
+    if (connModelsMatch && method === 'GET') {
+      return json(route, {
+        models: [{
+          name: 'fake-model',
+          provider: 'fake',
+          context_window: 128000,
+          supports_tools: true,
+          supports_vision: true,
+        }],
+      })
+    }
+    const connCheckMatch = path.match(/\/provider-connections\/([^/]+)\/check$/)
+    if (connCheckMatch && method === 'POST') {
+      const cid = decodeURIComponent(connCheckMatch[1])
+      const conn = store.providerConnections[cid]
+      if (conn) {
+        conn.last_check = {
+          connected: true,
+          detail: 'ok',
+          error_category: '',
+          latency_ms: 12,
+          model_count: 1,
+          checked_at: nowIso(),
+        }
+      }
+      return json(route, {
+        connection_id: cid,
+        provider_type: 'fake',
+        connected: true,
+        detail: 'ok',
+        latency_ms: 12,
+        model_count: 1,
+      })
+    }
+    const connDefaultMatch = path.match(/\/provider-connections\/([^/]+)\/set-default$/)
+    if (connDefaultMatch && method === 'POST') {
+      const cid = decodeURIComponent(connDefaultMatch[1])
+      for (const c of Object.values(store.providerConnections)) c.is_default = false
+      if (store.providerConnections[cid]) store.providerConnections[cid].is_default = true
+      return json(route, { connection: store.providerConnections[cid] })
+    }
+    const connItemMatch = path.match(/\/provider-connections\/([^/]+)$/)
+    if (connItemMatch) {
+      const cid = decodeURIComponent(connItemMatch[1])
+      if (method === 'GET') {
+        const conn = store.providerConnections[cid]
+        if (!conn) return json(route, { detail: 'not found' }, 404)
+        return json(route, { connection: conn })
+      }
+      if (method === 'PUT') {
+        const body = request.postDataJSON() as Record<string, unknown>
+        const conn = store.providerConnections[cid]
+        if (!conn) return json(route, { detail: 'not found' }, 404)
+        if (body.display_name) conn.display_name = String(body.display_name)
+        if (body.base_url !== undefined) conn.base_url = String(body.base_url)
+        if (body.default_model) conn.default_model = String(body.default_model)
+        if (body.api_key) {
+          conn.credential_configured = true
+          conn.credential_source = 'vault'
+          conn.credential_fingerprint = 'e2e1'
+        }
+        conn.revision = Number(conn.revision ?? 1) + 1
+        conn.updated_at = nowIso()
+        return json(route, { connection: conn })
+      }
+      if (method === 'DELETE') {
+        delete store.providerConnections[cid]
+        return json(route, { deleted: true, connection_id: cid })
+      }
+    }
     if (path.endsWith('/providers/config')) {
-      return json(route, { provider: 'fake', model: 'fake-model' })
+      return json(route, { provider: 'fake', model: 'fake-model', connection_id: 'conn-fake-default' })
     }
     if (path.endsWith('/providers') && method === 'GET') {
       return json(route, {

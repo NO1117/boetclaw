@@ -202,7 +202,7 @@ test.describe('routing and agent workspace', () => {
     await expect(page.getByText('ToolGuard 策略')).toBeVisible()
 
     await page.goto('/settings/providers')
-    await expect(page.getByRole('heading', { level: 3, name: '模型 Provider' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 3, name: '模型连接' })).toBeVisible()
 
     await page.goto('/agents/workspace-a')
     await expect(page).toHaveURL(/\/agents\/workspace-a$/)
@@ -314,5 +314,36 @@ test.describe('knowledge base flow', () => {
     await expect(page.getByText(/:kb=1/)).toBeVisible()
     await expect(page.getByText('知识库引用')).toBeVisible()
     await expect(page.getByText('fixture-kb.txt')).toBeVisible()
+  })
+})
+
+test.describe('provider connections', () => {
+  test('完整连接管理流程且密钥不可回读', async ({ page, fakeBackend }) => {
+    await page.goto('/settings/providers')
+    await expect(page.getByRole('heading', { name: '模型连接' })).toBeVisible()
+    await expect(page.getByText('Fake 默认连接')).toBeVisible()
+
+    await page.getByRole('button', { name: '新建连接' }).click()
+    await page.getByPlaceholder('显示名称').fill('E2E OpenAI')
+    await page.getByPlaceholder('API Key').fill('sk-e2e-secret-key-9999')
+    await page.getByPlaceholder('默认模型').fill('fake-model')
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect(page.getByText('连接已创建')).toBeVisible()
+    const newRow = page.locator('.mgr-item').filter({ hasText: 'E2E OpenAI' })
+    await expect(newRow).toBeVisible()
+    await expect(page.getByText('sk-e2e')).not.toBeVisible()
+
+    const connIds = Object.keys(fakeBackend.providerConnections)
+    const newId = connIds.find(id => id.startsWith('conn-e2e-'))
+    expect(newId).toBeTruthy()
+    const conn = fakeBackend.providerConnections[newId!]
+    expect(conn.credential_fingerprint).toBe('e2e1')
+    expect(JSON.stringify(conn)).not.toContain('sk-e2e-secret')
+
+    await newRow.getByRole('button', { name: '检测' }).click()
+    await expect.poll(() => fakeBackend.providerConnections[newId!]?.last_check?.connected).toBe(true)
+
+    await newRow.getByRole('button', { name: '设为默认' }).click()
+    await expect(page.getByText('已设为默认连接')).toBeVisible()
   })
 })

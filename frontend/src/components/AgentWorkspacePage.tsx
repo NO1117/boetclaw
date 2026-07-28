@@ -14,6 +14,8 @@ import {
   fetchApprovals,
   fetchDefaultProviderConfig,
   fetchMonitorHealth,
+  fetchConnectionModels,
+  fetchProviderConnections,
   fetchProviderModels,
   fetchProviders,
   fetchSkills,
@@ -30,6 +32,7 @@ import {
   type AgentProfileResponse,
   type AgentProfileVersionSummary,
   type ModelInfo,
+  type ProviderConnectionInfo,
   type ProviderInfo,
 } from '../services/api'
 import { capabilityTags } from '../utils/modelCapabilities'
@@ -155,6 +158,7 @@ export default function AgentWorkspacePage({
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
   const [checkpointBackend, setCheckpointBackend] = useState<string | undefined>()
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [connections, setConnections] = useState<ProviderConnectionInfo[]>([])
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelInfo[]>>({})
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview')
   const [runtime, setRuntime] = useState({
@@ -229,12 +233,27 @@ export default function AgentWorkspacePage({
 
   const loadProviders = useCallback(async () => {
     try {
-      const providerResp = await fetchProviders()
+      const [providerResp, connResp] = await Promise.all([
+        fetchProviders(),
+        fetchProviderConnections(true),
+      ])
       const configured = providerResp.providers.filter(p => p.configured)
       setProviders(configured)
+      setConnections(connResp.connections)
       const modelMap: Record<string, ModelInfo[]> = {}
       await Promise.all(
+        connResp.connections.map(async conn => {
+          try {
+            const resp = await fetchConnectionModels(conn.id)
+            modelMap[conn.id] = resp.models
+          } catch {
+            modelMap[conn.id] = []
+          }
+        }),
+      )
+      await Promise.all(
         configured.map(async provider => {
+          if (modelMap[provider.name]) return
           try {
             const resp = await fetchProviderModels(provider.name)
             modelMap[provider.name] = resp.models
@@ -246,6 +265,7 @@ export default function AgentWorkspacePage({
       setModelsByProvider(modelMap)
     } catch {
       setProviders([])
+      setConnections([])
       setModelsByProvider({})
     }
   }, [])
@@ -560,10 +580,15 @@ export default function AgentWorkspacePage({
           </span>
         </label>
         <label>
-          Provider（留空继承）
+          模型连接（留空继承）
           <select value={draft.provider} onChange={e => setDraft(v => ({ ...v, provider: e.target.value, model: '' }))}>
             <option value="">继承全局</option>
-            {providers.map(p => <option key={p.name} value={p.name}>{p.display_name || p.name}</option>)}
+            {connections.map(c => (
+              <option key={c.id} value={c.id}>{c.display_name} ({c.provider_type})</option>
+            ))}
+            {connections.length === 0 && providers.map(p => (
+              <option key={p.name} value={p.name}>{p.display_name || p.name}</option>
+            ))}
           </select>
         </label>
         <label>
@@ -706,7 +731,7 @@ export default function AgentWorkspacePage({
           )}
           {wizardStep === 'model' && (
             <div className="mgr-form">
-              <label>Provider（可留空）<select value={wizardProfile.provider} onChange={e => setWizardProfile(v => ({ ...v, provider: e.target.value, model: '' }))}><option value="">继承</option>{providers.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</select></label>
+              <label>模型连接（可留空）<select value={wizardProfile.provider} onChange={e => setWizardProfile(v => ({ ...v, provider: e.target.value, model: '' }))}><option value="">继承</option>{connections.map(c => <option key={c.id} value={c.id}>{c.display_name}</option>)}{connections.length === 0 && providers.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</select></label>
               <label>模型<select value={wizardProfile.model} disabled={!wizardProfile.provider} onChange={e => setWizardProfile(v => ({ ...v, model: e.target.value }))}><option value="">继承</option>{(modelsByProvider[wizardProfile.provider] ?? []).map(m => <option key={m.name} value={m.name}>{m.name}</option>)}</select></label>
             </div>
           )}

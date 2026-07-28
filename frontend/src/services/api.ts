@@ -1331,7 +1331,10 @@ export async function fetchRunMetrics(traceId: string): Promise<RunMetricsSummar
 
 export interface ProviderConfig {
   name: string
+  connection_id?: string | null
   api_key_configured: boolean
+  credential_source?: string
+  credential_fingerprint?: string
   base_url: string
   is_default: boolean
   default_model: string
@@ -1340,6 +1343,40 @@ export interface ProviderConfig {
 export interface DefaultProviderConfig {
   provider: string
   model: string
+  connection_id?: string | null
+}
+
+export interface ProviderConnectionInfo {
+  id: string
+  provider_type: string
+  display_name: string
+  base_url: string
+  credential_id: string | null
+  credential_configured: boolean
+  credential_source: 'vault' | 'environment' | 'none'
+  credential_fingerprint: string
+  default_model: string
+  enabled: boolean
+  timeout_seconds: number
+  revision: number
+  is_default: boolean
+  created_at: string
+  updated_at: string
+  last_check: {
+    connected: boolean
+    detail: string
+    error_category: string
+    latency_ms: number
+    model_count: number
+    checked_at: string
+  } | null
+}
+
+export interface VaultStatus {
+  configured: boolean
+  writable: boolean
+  credential_count: number
+  message: string
 }
 
 export async function fetchProviders(): Promise<{ providers: ProviderInfo[] }> {
@@ -1391,6 +1428,114 @@ export async function fetchProviderModels(name: string): Promise<{ models: Model
 
 export async function checkProvider(name: string): Promise<{ provider: string; connected: boolean; detail: string }> {
   const res = await fetch(`${API_BASE}/providers/${name}/check`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// ----- Provider Connections (vault-backed) -----
+
+export async function fetchVaultStatus(): Promise<VaultStatus> {
+  const res = await fetch(`${API_BASE}/provider-connections/vault/status`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchProviderConnections(enabledOnly = false): Promise<{ connections: ProviderConnectionInfo[] }> {
+  const q = enabledOnly ? '?enabled_only=true' : ''
+  const res = await fetch(`${API_BASE}/provider-connections${q}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function createProviderConnection(payload: {
+  provider_type: string
+  display_name?: string
+  base_url?: string
+  api_key?: string
+  default_model?: string
+  enabled?: boolean
+  timeout_seconds?: number
+  set_default?: boolean
+  validate_only?: boolean
+}): Promise<{ connection: ProviderConnectionInfo } | { valid: boolean; connection: ProviderConnectionInfo }> {
+  const res = await fetch(`${API_BASE}/provider-connections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateProviderConnection(
+  connectionId: string,
+  payload: {
+    display_name?: string
+    base_url?: string
+    api_key?: string
+    default_model?: string
+    enabled?: boolean
+    timeout_seconds?: number
+    expected_revision?: number
+    validate_only?: boolean
+  },
+): Promise<{ connection: ProviderConnectionInfo } | { valid: boolean; connection: ProviderConnectionInfo }> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteProviderConnection(connectionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function checkProviderConnection(
+  connectionId: string,
+  draft?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}/check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft ?? {}),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function setDefaultProviderConnection(connectionId: string): Promise<{ connection: ProviderConnectionInfo }> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}/set-default`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cloneProviderConnection(connectionId: string): Promise<{ connection: ProviderConnectionInfo }> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}/clone`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function importEnvProviderCredentials(): Promise<{
+  imported_connection_ids: string[]
+  count: number
+  env_cleanup_required: boolean
+  message: string
+}> {
+  const res = await fetch(`${API_BASE}/provider-connections/import-env`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchConnectionModels(connectionId: string): Promise<{ models: ModelInfo[] }> {
+  const res = await fetch(`${API_BASE}/provider-connections/${encodeURIComponent(connectionId)}/models`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

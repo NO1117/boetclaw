@@ -48,8 +48,37 @@ def _safe_tool_names() -> set[str]:
 
 
 def resolve_effective(profile: AgentProfile) -> EffectiveAgentConfig:
-    provider = profile.provider.strip() or settings.llm_provider
-    model = profile.model.strip() or settings.llm_model
+    provider = profile.provider.strip()
+    model = profile.model.strip()
+    if not provider:
+        default = None
+        try:
+            from app.providers.connections.service import connection_service
+
+            default = connection_service.get_default_connection()
+        except Exception:  # noqa: BLE001
+            pass
+        if default:
+            provider = default.id
+            model = model or default.default_model
+        else:
+            provider = settings.llm_provider
+            model = model or settings.llm_model
+    elif not model:
+        try:
+            from app.providers.connections.service import connection_service
+
+            if provider.startswith("conn_"):
+                conn = connection_service.get_connection(provider)
+                model = str(conn.get("default_model", ""))
+            else:
+                default = connection_service.get_default_connection()
+                if default and default.provider_type == provider:
+                    model = default.default_model
+                else:
+                    model = settings.llm_model if settings.llm_provider == provider else provider_manager.get(provider).default_model
+        except Exception:  # noqa: BLE001
+            model = settings.llm_model
     memory_mode = profile.memory_mode
     if memory_mode == "inherit":
         memory_mode = settings.memory_auto_mode if settings.memory_auto_mode in {"off", "review", "auto"} else "review"
@@ -107,14 +136,27 @@ def validate_profile(profile: AgentProfile, *, is_default_agent: bool = False) -
 
         effective = resolve_effective(profile)
         if profile.provider.strip() or profile.model.strip():
-            try:
-                provider_manager.get(effective.provider)
-            except ValueError:
-                errors.append(f"未知 Provider: {effective.provider}")
+            prov = effective.provider
+            if prov.startswith("conn_"):
+                try:
+                    from app.providers.connections.service import connection_service
+
+                    conn = connection_service.get_connection(prov)
+                    provider_type = str(conn["provider_type"])
+                    known = {m.name for m in provider_manager.list_models(provider_type)}
+                    if effective.model not in known:
+                        errors.append(f"未知模型: {prov}/{effective.model}")
+                except Exception:  # noqa: BLE001
+                    errors.append(f"未知连接: {prov}")
             else:
-                known = {m.name for m in provider_manager.list_models(effective.provider)}
-                if effective.model not in known:
-                    errors.append(f"未知模型: {effective.provider}/{effective.model}")
+                try:
+                    provider_manager.get(effective.provider)
+                except ValueError:
+                    errors.append(f"未知 Provider: {effective.provider}")
+                else:
+                    known = {m.name for m in provider_manager.list_models(effective.provider)}
+                    if effective.model not in known:
+                        errors.append(f"未知模型: {effective.provider}/{effective.model}")
 
         known_tools = _known_tool_names()
         if profile.tool_policy == "allowlist":

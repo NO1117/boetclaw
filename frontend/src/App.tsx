@@ -1017,7 +1017,7 @@ function SettingsPage({
 }) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'skills', label: '技能' },
-    { id: 'providers', label: '模型 Provider' },
+    { id: 'providers', label: '模型连接' },
     { id: 'scheduler', label: 'Cron 与心跳' },
     { id: 'plugins', label: '插件' },
     { id: 'channels', label: '渠道' },

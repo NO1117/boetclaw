@@ -197,11 +197,24 @@ def learn_capabilities(model_key: str, caps: ModelCapabilities, source: str = "d
     cache.learn_entry(model_key, existing_caps, existing_sources, existing_updated)
 
 
-def provider_config_fingerprint(provider: str) -> str:
+def provider_config_fingerprint(provider: str, *, connection_id: str | None = None) -> str:
     from app.core.config import settings
 
     parts: list[str] = [provider]
-    if provider == "openai":
+    if connection_id:
+        parts.append(f"conn:{connection_id}")
+        try:
+            from app.providers.connections.service import connection_service
+
+            conn = connection_service.get_connection(connection_id)
+            parts.extend([
+                str(conn.get("base_url") or ""),
+                "key:" + ("1" if conn.get("credential_configured") else "0"),
+                str(conn.get("revision", 0)),
+            ])
+        except Exception:  # noqa: BLE001
+            pass
+    elif provider == "openai":
         parts.extend([settings.openai_base_url or "", "key:" + ("1" if settings.openai_api_key else "0")])
     elif provider == "anthropic":
         parts.extend([settings.anthropic_base_url or "", "key:" + ("1" if settings.anthropic_api_key else "0")])
