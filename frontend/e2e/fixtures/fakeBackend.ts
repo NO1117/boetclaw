@@ -29,6 +29,10 @@ export interface FakeStore {
   reports: Array<Record<string, unknown>>
   params: Array<Record<string, unknown>>
   tasks: Array<Record<string, unknown>>
+  taskAttempts: Record<string, Array<Record<string, unknown>>>
+  taskEvents: Record<string, Array<Record<string, unknown>>>
+  taskQueuePaused: boolean
+  taskEventSeq: number
   approvals: Array<Record<string, unknown>>
   lastChatBody: Record<string, unknown> | null
   lastPlanConfirm: Record<string, unknown> | null
@@ -130,6 +134,10 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
     reports: [],
     params: [],
     tasks: [],
+    taskAttempts: {},
+    taskEvents: {},
+    taskQueuePaused: false,
+    taskEventSeq: 0,
     approvals: [],
     lastChatBody: null,
     lastPlanConfirm: null,
@@ -190,6 +198,10 @@ export function createFakeStore(options: FakeBackendOptions = {}): FakeStore {
       store.reports = []
       store.params = []
       store.tasks = []
+      store.taskAttempts = {}
+      store.taskEvents = {}
+      store.taskQueuePaused = false
+      store.taskEventSeq = 0
       store.approvals = []
       store.lastChatBody = null
       store.lastPlanConfirm = null
@@ -1261,20 +1273,80 @@ export async function installFakeBackend(
     }
 
     // ----- tasks -----
+    if (path.endsWith('/tasks/stats') && method === 'GET') {
+      const statusCounts: Record<string, number> = {}
+      for (const task of store.tasks) {
+        const status = String(task.status || 'pending')
+        statusCounts[status] = (statusCounts[status] || 0) + 1
+      }
+      return json(route, {
+        queue_depth: store.tasks.filter(t => ['pending', 'queued', 'scheduled', 'retry_wait'].includes(String(t.status))).length,
+        status_counts: statusCounts,
+        dead_letter_count: statusCounts.dead_letter || 0,
+        retry_total: Object.values(store.taskAttempts).flat().length,
+        lease_reclaimed_total: 0,
+        paused: store.taskQueuePaused,
+      })
+    }
+    if (path.endsWith('/tasks/queue/control') && method === 'POST') {
+      const body = request.postDataJSON() as { paused: boolean }
+      store.taskQueuePaused = !!body.paused
+      const statusCounts: Record<string, number> = {}
+      for (const task of store.tasks) {
+        const status = String(task.status || 'pending')
+        statusCounts[status] = (statusCounts[status] || 0) + 1
+      }
+      return json(route, {
+        queue_depth: store.tasks.length,
+        status_counts: statusCounts,
+        dead_letter_count: statusCounts.dead_letter || 0,
+        retry_total: 0,
+        lease_reclaimed_total: 0,
+        paused: store.taskQueuePaused,
+      })
+    }
+    if (path.endsWith('/tasks/list') && method === 'GET') {
+      const status = url.searchParams.get('status')
+      const q = (url.searchParams.get('q') || '').toLowerCase()
+      let tasks = status
+        ? store.tasks.filter(t => t.status === status || (status === 'pending' && t.status === 'queued'))
+        : store.tasks
+      if (q) {
+        tasks = tasks.filter(t => JSON.stringify(t).toLowerCase().includes(q))
+      }
+      return json(route, { items: tasks, next_cursor: null })
+    }
+    if (path.endsWith('/tasks/events/stream') && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: ping\ndata: {}\n\n' })
+      return
+    }
     if (path.endsWith('/tasks') && method === 'GET') {
       const status = url.searchParams.get('status')
       const tasks = status
-        ? store.tasks.filter(t => t.status === status)
+        ? store.tasks.filter(t => t.status === status || (status === 'pending' && t.status === 'queued'))
         : store.tasks
       return json(route, tasks)
     }
     if (path.endsWith('/tasks') && method === 'POST') {
-      const body = request.postDataJSON() as { title: string; prompt: string }
+      const body = request.postDataJSON() as {
+        title: string
+        prompt: string
+        auto_run?: boolean
+        scheduled_at?: string
+        priority?: number
+        idempotency_key?: string
+      }
+      if (body.idempotency_key) {
+        const existing = store.tasks.find(t => t.idempotency_key === body.idempotency_key)
+        if (existing) return json(route, existing, 201)
+      }
+      const scheduled = body.scheduled_at || ''
+      const status = scheduled ? 'scheduled' : (body.auto_run === false ? 'pending' : 'running')
       const task = {
         id: `task-${store.tasks.length + 1}`,
         title: body.title,
         prompt: body.prompt,
-        status: 'running',
+        status,
         thread_id: `task-thread-${store.tasks.length + 1}`,
         trace_id: `task-trace-${store.tasks.length + 1}`,
         run_id: `task-run-${store.tasks.length + 1}`,
@@ -1283,16 +1355,56 @@ export async function installFakeBackend(
         gateway: '',
         created_at: nowIso(),
         updated_at: nowIso(),
+        scheduled_at: scheduled,
+        priority: body.priority ?? 0,
+        attempt_count: status === 'running' ? 1 : 0,
+        max_attempts: 3,
+        retry_after: '',
+        agent_id: 'default',
+        source: 'api',
+        revision: 1,
+        metadata: {},
+        run_snapshot: {},
+        idempotency_key: body.idempotency_key || '',
       }
       store.tasks = [task, ...store.tasks]
-      return json(route, task)
+      store.taskEvents[task.id as string] = [{
+        id: ++store.taskEventSeq,
+        task_id: task.id,
+        event_type: 'created',
+        payload: { status },
+        created_at: nowIso(),
+      }]
+      if (status === 'running') {
+        store.taskAttempts[task.id as string] = [{
+          id: 1,
+          task_id: task.id,
+          attempt_number: 1,
+          status: 'running',
+          started_at: nowIso(),
+          finished_at: '',
+          duration_ms: 0,
+        }]
+      }
+      return json(route, task, 201)
     }
-    const taskMatch = path.match(/\/tasks\/([^/]+)(?:\/(cancel|run))?$/)
+    const taskMatch = path.match(/\/tasks\/([^/]+)(?:\/(cancel|run|requeue|retry|attempts|events))?$/)
     if (taskMatch) {
       const taskId = decodeURIComponent(taskMatch[1])
       const action = taskMatch[2]
       const task = store.tasks.find(t => t.id === taskId)
       if (!task) return json(route, { detail: 'Task not found' }, 404)
+      if (action === 'attempts' && method === 'GET') {
+        return json(route, store.taskAttempts[taskId] || [])
+      }
+      if (action === 'events' && method === 'GET') {
+        return json(route, store.taskEvents[taskId] || [])
+      }
+      if ((action === 'requeue' || action === 'retry') && method === 'POST') {
+        task.status = 'pending'
+        task.updated_at = nowIso()
+        return json(route, task)
+      }
       if (action === 'cancel' && method === 'POST') {
         task.status = 'cancelled'
         task.updated_at = nowIso()

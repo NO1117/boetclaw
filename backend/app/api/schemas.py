@@ -124,6 +124,21 @@ class TaskCreateRequest(BaseModel):
     gateway: str = ""
     gateway_user: str = ""
     metadata: dict[str, Any] = {}
+    agent_id: str = ""
+    scheduled_at: str = ""
+    priority: int = 0
+    max_attempts: int | None = None
+    idempotency_key: str = ""
+
+
+class TaskUpdateRequest(BaseModel):
+    revision: int = Field(..., ge=1)
+    title: str | None = None
+    prompt: str | None = None
+    priority: int | None = None
+    scheduled_at: str | None = None
+    max_attempts: int | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class TaskResponse(BaseModel):
@@ -139,6 +154,59 @@ class TaskResponse(BaseModel):
     gateway: str = ""
     created_at: str
     updated_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    revision: int = 1
+    scheduled_at: str = ""
+    priority: int = 0
+    attempt_count: int = 0
+    max_attempts: int = 3
+    retry_after: str = ""
+    agent_id: str = "default"
+    source: str = "api"
+    run_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskAttemptResponse(BaseModel):
+    id: int
+    task_id: str
+    attempt_number: int
+    status: str
+    worker_id: str = ""
+    run_id: str = ""
+    trace_id: str = ""
+    thread_id: str = ""
+    result_summary: str = ""
+    error_summary: str = ""
+    error_category: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: int = 0
+
+
+class TaskEventResponse(BaseModel):
+    id: int
+    task_id: str
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class TaskListResponse(BaseModel):
+    items: list[TaskResponse]
+    next_cursor: str | None = None
+
+
+class TaskQueueStatsResponse(BaseModel):
+    queue_depth: int = 0
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    dead_letter_count: int = 0
+    retry_total: int = 0
+    lease_reclaimed_total: int = 0
+    paused: bool = False
+
+
+class TaskQueueControlRequest(BaseModel):
+    paused: bool
 
 
 class ToolInfo(BaseModel):

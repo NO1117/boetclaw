@@ -2172,8 +2172,91 @@
         "title": "SpeechRequest",
         "type": "object"
       },
+      "TaskAttemptResponse": {
+        "properties": {
+          "attempt_number": {
+            "title": "Attempt Number",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "default": 0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error_category": {
+            "default": "",
+            "title": "Error Category",
+            "type": "string"
+          },
+          "error_summary": {
+            "default": "",
+            "title": "Error Summary",
+            "type": "string"
+          },
+          "finished_at": {
+            "default": "",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "result_summary": {
+            "default": "",
+            "title": "Result Summary",
+            "type": "string"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "default": "",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "thread_id": {
+            "default": "",
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "trace_id": {
+            "default": "",
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "worker_id": {
+            "default": "",
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "attempt_number",
+          "status"
+        ],
+        "title": "TaskAttemptResponse",
+        "type": "object"
+      },
       "TaskCreateRequest": {
         "properties": {
+          "agent_id": {
+            "default": "",
+            "title": "Agent Id",
+            "type": "string"
+          },
           "auto_run": {
             "default": true,
             "title": "Auto Run",
@@ -2189,15 +2272,41 @@
             "title": "Gateway User",
             "type": "string"
           },
+          "idempotency_key": {
+            "default": "",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "max_attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Attempts"
+          },
           "metadata": {
             "additionalProperties": true,
             "default": {},
             "title": "Metadata",
             "type": "object"
           },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
           "prompt": {
             "minLength": 1,
             "title": "Prompt",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "default": "",
+            "title": "Scheduled At",
             "type": "string"
           },
           "title": {
@@ -2213,8 +2322,129 @@
         "title": "TaskCreateRequest",
         "type": "object"
       },
+      "TaskEventResponse": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "event_type",
+          "created_at"
+        ],
+        "title": "TaskEventResponse",
+        "type": "object"
+      },
+      "TaskListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TaskListResponse",
+        "type": "object"
+      },
+      "TaskQueueControlRequest": {
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "TaskQueueControlRequest",
+        "type": "object"
+      },
+      "TaskQueueStatsResponse": {
+        "properties": {
+          "dead_letter_count": {
+            "default": 0,
+            "title": "Dead Letter Count",
+            "type": "integer"
+          },
+          "lease_reclaimed_total": {
+            "default": 0,
+            "title": "Lease Reclaimed Total",
+            "type": "integer"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "queue_depth": {
+            "default": 0,
+            "title": "Queue Depth",
+            "type": "integer"
+          },
+          "retry_total": {
+            "default": 0,
+            "title": "Retry Total",
+            "type": "integer"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          }
+        },
+        "title": "TaskQueueStatsResponse",
+        "type": "object"
+      },
       "TaskResponse": {
         "properties": {
+          "agent_id": {
+            "default": "default",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "attempt_count": {
+            "default": 0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -2233,6 +2463,21 @@
             "title": "Id",
             "type": "string"
           },
+          "max_attempts": {
+            "default": 3,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
           "prompt": {
             "title": "Prompt",
             "type": "string"
@@ -2242,9 +2487,34 @@
             "title": "Result",
             "type": "string"
           },
+          "retry_after": {
+            "default": "",
+            "title": "Retry After",
+            "type": "string"
+          },
+          "revision": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
           "run_id": {
             "default": "",
             "title": "Run Id",
+            "type": "string"
+          },
+          "run_snapshot": {
+            "additionalProperties": true,
+            "title": "Run Snapshot",
+            "type": "object"
+          },
+          "scheduled_at": {
+            "default": "",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "source": {
+            "default": "api",
+            "title": "Source",
             "type": "string"
           },
           "status": {
@@ -2279,6 +2549,87 @@
           "updated_at"
         ],
         "title": "TaskResponse",
+        "type": "object"
+      },
+      "TaskUpdateRequest": {
+        "properties": {
+          "max_attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Attempts"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled At"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "TaskUpdateRequest",
         "type": "object"
       },
       "TraceEventResponse": {
@@ -9433,7 +9784,7 @@
     },
     "/api/v1/tasks": {
       "get": {
-        "operationId": "list_tasks_api_v1_tasks_get",
+        "operationId": "list_tasks_legacy_api_v1_tasks_get",
         "parameters": [
           {
             "in": "query",
@@ -9460,7 +9811,7 @@
                   "items": {
                     "$ref": "#/components/schemas/TaskResponse"
                   },
-                  "title": "Response List Tasks Api V1 Tasks Get",
+                  "title": "Response List Tasks Legacy Api V1 Tasks Get",
                   "type": "array"
                 }
               }
@@ -9478,7 +9829,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List Tasks",
+        "summary": "List Tasks Legacy",
         "tags": [
           "Tasks"
         ]
@@ -9496,7 +9847,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9808,6 +10159,64 @@
         ]
       }
     },
+    "/api/v1/tasks/events/stream": {
+      "get": {
+        "operationId": "task_events_stream_api_v1_tasks_events_stream_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after_id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Events Stream",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
     "/api/v1/tasks/heartbeat": {
       "get": {
         "operationId": "get_heartbeat_api_v1_tasks_heartbeat_get",
@@ -9864,6 +10273,225 @@
         ]
       }
     },
+    "/api/v1/tasks/list": {
+      "get": {
+        "operationId": "list_tasks_paged_api_v1_tasks_list_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tasks Paged",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/queue/control": {
+      "post": {
+        "operationId": "queue_control_api_v1_tasks_queue_control_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskQueueControlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueueStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Control",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/stats": {
+      "get": {
+        "operationId": "queue_stats_api_v1_tasks_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueueStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Queue Stats",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
     "/api/v1/tasks/{task_id}": {
       "get": {
         "operationId": "get_task_api_v1_tasks__task_id__get",
@@ -9901,6 +10529,102 @@
           }
         },
         "summary": "Get Task",
+        "tags": [
+          "Tasks"
+        ]
+      },
+      "patch": {
+        "operationId": "update_task_api_v1_tasks__task_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Task",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/attempts": {
+      "get": {
+        "operationId": "list_attempts_api_v1_tasks__task_id__attempts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaskAttemptResponse"
+                  },
+                  "title": "Response List Attempts Api V1 Tasks  Task Id  Attempts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Attempts",
         "tags": [
           "Tasks"
         ]
@@ -9943,6 +10667,147 @@
           }
         },
         "summary": "Cancel Task",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/events": {
+      "get": {
+        "operationId": "list_task_events_api_v1_tasks__task_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaskEventResponse"
+                  },
+                  "title": "Response List Task Events Api V1 Tasks  Task Id  Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Task Events",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/requeue": {
+      "post": {
+        "operationId": "requeue_task_api_v1_tasks__task_id__requeue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Requeue Task",
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/retry": {
+      "post": {
+        "operationId": "retry_task_api_v1_tasks__task_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Task",
         "tags": [
           "Tasks"
         ]

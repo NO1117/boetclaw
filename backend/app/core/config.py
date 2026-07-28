@@ -121,6 +121,24 @@ class Settings(BaseSettings):
     kb_max_total_bytes_per_kb: int = 500 * 1024 * 1024
     kb_max_upload_batch: int = 20
 
+    # Durable task queue (SQLite WAL, single-instance worker)
+    task_queue_sqlite_path: Path = Field(default=BASE_DIR / "workspace" / "tasks" / "task_queue.sqlite3")
+    task_queue_legacy_json_path: Path = Field(default=BASE_DIR / "workspace" / "tasks" / "task_history.json")
+    task_queue_global_concurrency: int = 4
+    task_queue_agent_concurrency: int = 2
+    task_queue_provider_concurrency: int = 2
+    task_queue_lease_seconds: int = 120
+    task_queue_shutdown_grace_seconds: int = 30
+    task_queue_poll_interval_seconds: float = 1.0
+    task_queue_idempotency_window_seconds: int = 3600
+    task_queue_default_max_attempts: int = 3
+    task_queue_default_timeout_seconds: int = 600
+    task_queue_backoff_base_seconds: int = 5
+    task_queue_backoff_max_seconds: int = 300
+    task_queue_result_max_chars: int = 8000
+    task_queue_error_max_chars: int = 4000
+    task_queue_text_max_chars: int = 8000
+
     # Graph cache (isolated per-request agent graphs)
     graph_cache_max_size: int = 32
     graph_cache_ttl_seconds: int = 900

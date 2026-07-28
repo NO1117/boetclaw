@@ -347,3 +347,29 @@ test.describe('provider connections', () => {
     await expect(page.getByText('已设为默认连接')).toBeVisible()
   })
 })
+
+test.describe('durable task queue runtime center', () => {
+  test('创建计划任务、队列控制与详情尝试时间线', async ({ page, fakeBackend }) => {
+    await page.goto('/tasks')
+    await expect(page.getByRole('heading', { name: '运行中心' })).toBeVisible()
+
+    await page.locator('.panel-actions').getByRole('button', { name: '新建', exact: true }).click()
+    await page.getByPlaceholder('任务标题').fill('E2E 持久化任务')
+    await page.getByPlaceholder('任务描述 / Prompt').fill('scheduled durable flow')
+    const future = new Date(Date.now() + 3600_000)
+    const local = new Date(future.getTime() - future.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16)
+    await page.locator('input[type="datetime-local"]').fill(local)
+    await page.getByRole('button', { name: '提交任务' }).click()
+
+    await expect(page.getByText('E2E 持久化任务')).toBeVisible()
+    expect(fakeBackend.tasks.some(t => t.title === 'E2E 持久化任务')).toBeTruthy()
+
+    await page.getByRole('button', { name: '暂停' }).click()
+    await expect(page.getByText('已暂停')).toBeVisible()
+
+    await page.getByText('E2E 持久化任务').click()
+    await expect(page.getByRole('main').getByText('scheduled durable flow')).toBeVisible()
+  })
+})

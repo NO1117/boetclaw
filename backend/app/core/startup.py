@@ -95,6 +95,10 @@ async def phase2_background(app: Any) -> None:
         cron_service.start()
         heartbeat_service.start(scheduler=cron_service._scheduler)
 
+        from app.services.task_scheduler import task_scheduler
+
+        await task_scheduler.service.start_worker()
+
         from app.services.attachments.cleanup import run_attachment_cleanup
 
         cleanup_stats = run_attachment_cleanup()

@@ -142,7 +142,7 @@ Compose 将以下宿主目录绑定到 backend 容器：
 ./backend/plugins_ext -> /app/plugins_ext
 ```
 
-workspace 包含任务、Agent、审批历史、消息历史、访问控制、trace、生成产物，以及默认位于
+workspace 包含任务队列 SQLite（`tasks/task_queue.sqlite3` + WAL）、旧任务 JSON（`tasks/task_history.json`）、Agent、审批历史、消息历史、访问控制、trace、生成产物，以及默认位于
 `workspace/checkpoints/` 的每 Agent 独立 SQLite checkpoint。
 必须持久化 `/app/workspace` 才能跨容器重建保留这些数据。技能和插件目录也被绑定挂载，
 它们是可执行内容，应限制写权限和变更来源。
@@ -162,7 +162,7 @@ CHECKPOINT_SQLITE_PATH=./workspace/checkpoints
 
 如果把 `WORKSPACE_DIR` 或 `CHECKPOINT_SQLITE_PATH` 改到其他容器路径，必须同步修改 volume 目标；否则应用会把数据写入
 未持久化的容器层。备份时应把 workspace 当作敏感数据，并验证恢复，而不是只确认备份文件存在。
-备份 SQLite 时应停机或使用 SQLite 一致性备份方式，升级前先备份全部 checkpoint 数据库；官方
+备份 SQLite 时应停机或使用 SQLite 一致性备份方式（含任务队列 WAL：备份主库文件并复制 `-wal`/`-shm`，或使用 `backup API`）；升级前先备份全部 checkpoint 与任务队列数据库；官方
 `setup()` 只执行向前 schema 初始化，本项目不会在 Agent reload、idle eviction 或删除注册项时隐式清理 checkpoint。
 
 ## 可选 Ollama

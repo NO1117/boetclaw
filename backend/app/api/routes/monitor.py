@@ -164,12 +164,54 @@ async def metrics():
             _metric_line("boetclaw_llm_retries_total", count, {"provider": provider})
             for provider, count in sorted(provider_retry_counts.items())
         ],
-        "# HELP boetclaw_tasks_total Number of tasks by status.",
-        "# TYPE boetclaw_tasks_total gauge",
-        *[_metric_line("boetclaw_tasks_total", count, {"status": status}) for status, count in status_counts.items()],
         "# HELP boetclaw_trace_events_total Number of trace events in memory.",
         "# TYPE boetclaw_trace_events_total gauge",
         _metric_line("boetclaw_trace_events_total", len(events)),
+    ]
+    try:
+        queue_metrics = task_scheduler.service.queue_stats()
+        lines.extend(
+            [
+                "# HELP boetclaw_task_queue_depth Number of tasks waiting to run.",
+                "# TYPE boetclaw_task_queue_depth gauge",
+                _metric_line("boetclaw_task_queue_depth", queue_metrics.get("queue_depth", 0)),
+                "# HELP boetclaw_task_dead_letter_total Number of dead-letter tasks.",
+                "# TYPE boetclaw_task_dead_letter_total gauge",
+                _metric_line("boetclaw_task_dead_letter_total", queue_metrics.get("dead_letter_count", 0)),
+                "# HELP boetclaw_task_retry_total Number of failed attempts eligible for retry accounting.",
+                "# TYPE boetclaw_task_retry_total counter",
+                _metric_line("boetclaw_task_retry_total", queue_metrics.get("retry_total", 0)),
+                "# HELP boetclaw_task_queue_paused Whether durable queue dispatch is paused.",
+                "# TYPE boetclaw_task_queue_paused gauge",
+                _metric_line("boetclaw_task_queue_paused", 1 if queue_metrics.get("paused") else 0),
+            ]
+        )
+        for status, count in sorted((queue_metrics.get("status_counts") or {}).items()):
+            lines.append(_metric_line("boetclaw_tasks_total", count, {"status": status}))
+    except Exception:
+        tasks = task_scheduler.list_tasks()
+        fallback_counts: dict[str, int] = {}
+        for task in tasks:
+            key = task.status.value if task.status.value != "pending" else "pending"
+            fallback_counts[key] = fallback_counts.get(key, 0) + 1
+        lines.extend(
+            [
+                "# HELP boetclaw_tasks_total Number of tasks by status.",
+                "# TYPE boetclaw_tasks_total gauge",
+            ]
+        )
+        lines.extend(
+            [_metric_line("boetclaw_tasks_total", count, {"status": status}) for status, count in fallback_counts.items()]
+        )
+    else:
+        lines.extend(
+            [
+                "# HELP boetclaw_tasks_total Number of tasks by status.",
+                "# TYPE boetclaw_tasks_total gauge",
+            ]
+        )
+    lines.extend(
+        [
         "# HELP boetclaw_trace_events_by_type Number of trace events by type.",
         "# TYPE boetclaw_trace_events_by_type gauge",
         *[
@@ -195,7 +237,8 @@ async def metrics():
             _metric_line("boetclaw_mcp_recover_total", count, {"result": result})
             for result, count in mcp_manager.recover_counts().items()
         ],
-    ]
+        ]
+    )
     return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 

@@ -219,9 +219,11 @@ write_todos / 高风险工具
 
 该布局只面向单实例：每 Agent 独立 DB 是 Agent 隔离手段，不是多实例协调方案。审批 JSON、LangGraph SQLite 与工具写入的外部资源没有共同事务；进程在工具副作用完成后、graph/审批状态写回前崩溃时无法判定副作用结果。因此这里的“单次执行”是受测正常流程与单进程并发语义，不是跨资源或分布式 exactly-once。
 
-### 6.4 后台任务
+### 6.4 后台任务（持久化队列）
 
-任务创建或重跑后由单进程 `RunRegistry` 创建并持有 `asyncio.Task`，状态写入 JSON。取消接口先进入 `cancelling`，取消底层协程并等待确认；受限状态转换与 CAS 防止 `cancelled` 被迟到的完成/失败结果覆盖。重复取消幂等，已完成或失败返回冲突。该机制不跨进程、多副本或服务重启恢复活动协程。
+任务状态持久化在 SQLite WAL（`workspace/tasks/task_queue.sqlite3`），启动时幂等迁移旧 `task_history.json`。单实例 Worker 通过租约领取 `queued/scheduled/retry_wait` 任务；事务条件更新防止并发竞态。重启后未完成的 `running/leased/cancelling` 标记为 `interrupted`，不伪装继续运行。
+
+API `/run` 与渠道仍可通过 `RunRegistry` 直接触发协程（兼容路径）；Worker 路径使用冻结 Agent/连接快照。状态含 `queued/scheduled/leased/running/retry_wait/dead_letter/interrupted` 等；旧 `pending` 映射为 `queued`。
 
 ### 6.5 渠道消息
 
@@ -274,7 +276,8 @@ workspace/
 ├─ checkpoints/
 │  └─ agent-{agent_id摘要}.sqlite3    # 每 Agent 独立 LangGraph checkpoint
 ├─ sessions/{thread_id}.json         # 会话
-├─ tasks/task_history.json           # 后台任务
+├─ tasks/task_queue.sqlite3       # 持久化任务队列（WAL）
+├─ tasks/task_history.json        # 旧 JSON 历史（迁移源，不自动删除）
 ├─ plans/plan_history.json           # 计划审计
 ├─ security/approval_history.json    # 审批审计
 ├─ gateway/message_history.json      # 渠道消息，最近 500 条

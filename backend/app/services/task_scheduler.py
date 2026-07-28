@@ -1,8 +1,7 @@
-"""Task scheduling and management."""
+"""Task scheduling facade with durable SQLite queue backend."""
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
-from app.core.observability import EventType, emit_event
+from app.services.task_queue.models import TaskRecord, TaskStatus as QueueStatus
+from app.services.task_queue.service import TaskQueueService
 
 
 class TaskStatus(str, Enum):
@@ -21,27 +21,27 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    QUEUED = "queued"
+    SCHEDULED = "scheduled"
+    LEASED = "leased"
+    RETRY_WAIT = "retry_wait"
+    DEAD_LETTER = "dead_letter"
+    INTERRUPTED = "interrupted"
 
+    @classmethod
+    def from_queue(cls, status: QueueStatus | str) -> "TaskStatus":
+        value = status.value if isinstance(status, QueueStatus) else str(status)
+        if value == "queued":
+            return cls.PENDING
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.PENDING
 
-_TASK_TRANSITIONS = {
-    TaskStatus.PENDING: {
-        TaskStatus.RUNNING,
-        TaskStatus.CANCELLING,
-        TaskStatus.CANCELLED,
-        TaskStatus.COMPLETED,
-        TaskStatus.FAILED,
-    },
-    TaskStatus.RUNNING: {
-        TaskStatus.CANCELLING,
-        TaskStatus.CANCELLED,
-        TaskStatus.COMPLETED,
-        TaskStatus.FAILED,
-    },
-    TaskStatus.CANCELLING: {TaskStatus.CANCELLED},
-    TaskStatus.COMPLETED: {TaskStatus.PENDING},
-    TaskStatus.FAILED: {TaskStatus.PENDING},
-    TaskStatus.CANCELLED: {TaskStatus.PENDING},
-}
+    def to_queue(self) -> QueueStatus:
+        if self == TaskStatus.PENDING:
+            return QueueStatus.QUEUED
+        return QueueStatus(self.value)
 
 
 @dataclass
@@ -60,13 +60,22 @@ class Task:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: dict[str, Any] = field(default_factory=dict)
+    revision: int = 1
+    scheduled_at: str = ""
+    priority: int = 0
+    attempt_count: int = 0
+    max_attempts: int = 3
+    retry_after: str = ""
+    agent_id: str = "default"
+    source: str = "api"
+    run_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "title": self.title,
             "prompt": self.prompt,
-            "status": self.status.value,
+            "status": self.status.value if self.status != TaskStatus.PENDING else "pending",
             "thread_id": self.thread_id,
             "trace_id": self.trace_id,
             "run_id": self.run_id,
@@ -77,67 +86,65 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "metadata": self.metadata,
+            "revision": self.revision,
+            "scheduled_at": self.scheduled_at,
+            "priority": self.priority,
+            "attempt_count": self.attempt_count,
+            "max_attempts": self.max_attempts,
+            "retry_after": self.retry_after,
+            "agent_id": self.agent_id,
+            "source": self.source,
+            "run_snapshot": self.run_snapshot,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Task":
-        status = TaskStatus(data.get("status", TaskStatus.PENDING.value))
-        error = str(data.get("error", ""))
-        updated_at = str(data.get("updated_at") or datetime.now(timezone.utc).isoformat())
-        if status in {TaskStatus.RUNNING, TaskStatus.CANCELLING}:
-            status = TaskStatus.FAILED
-            error = error or "Task interrupted by service restart"
-            updated_at = datetime.now(timezone.utc).isoformat()
+    def from_record(cls, record: TaskRecord) -> "Task":
         return cls(
-            id=str(data.get("id", uuid.uuid4().hex[:12])),
-            title=str(data.get("title", "")),
-            prompt=str(data.get("prompt", "")),
-            status=status,
-            thread_id=str(data.get("thread_id", "")),
-            trace_id=str(data.get("trace_id", "")),
-            run_id=str(data.get("run_id", "")),
-            result=str(data.get("result", "")),
-            error=error,
-            gateway=str(data.get("gateway", "")),
-            gateway_user=str(data.get("gateway_user", "")),
-            created_at=str(data.get("created_at") or datetime.now(timezone.utc).isoformat()),
-            updated_at=updated_at,
-            metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
+            id=record.id,
+            title=record.title,
+            prompt=record.prompt,
+            status=TaskStatus.from_queue(record.status),
+            thread_id=record.thread_id,
+            trace_id=record.trace_id,
+            run_id=record.run_id,
+            result=record.result,
+            error=record.error,
+            gateway=record.gateway,
+            gateway_user=record.gateway_user,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            metadata=record.metadata,
+            revision=record.revision,
+            scheduled_at=record.scheduled_at,
+            priority=record.priority,
+            attempt_count=record.attempt_count,
+            max_attempts=record.max_attempts,
+            retry_after=record.retry_after,
+            agent_id=record.agent_id,
+            source=record.source,
+            run_snapshot=record.run_snapshot,
         )
 
 
 class TaskScheduler:
-    """Simple task scheduler with JSON persistence."""
+    """Compatibility scheduler backed by durable SQLite queue."""
 
-    def __init__(self, store_path: Path | None = None) -> None:
-        self.store_path = store_path or (settings.workspace_dir / "tasks" / "task_history.json")
-        self._tasks: dict[str, Task] = {}
-        self._load()
+    def __init__(self, store_path: Path | None = None, db_path: Path | None = None) -> None:
+        legacy = store_path or (settings.workspace_dir / "tasks" / "task_history.json")
+        sqlite_path = db_path or legacy.parent / "task_queue.sqlite3"
+        self.store_path = legacy
+        self._service = TaskQueueService(db_path=sqlite_path, legacy_json_path=legacy)
+        self._service.initialize()
+
+    @property
+    def service(self) -> TaskQueueService:
+        return self._service
 
     def _load(self) -> None:
-        if not self.store_path.exists():
-            return
-        try:
-            rows = json.loads(self.store_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError):
-            return
-        if not isinstance(rows, list):
-            return
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            try:
-                task = Task.from_dict(row)
-            except ValueError:
-                continue
-            if task.id:
-                self._tasks[task.id] = task
-        self._save()
+        self._service.initialize()
 
     def _save(self) -> None:
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        rows = [task.to_dict() for task in self.list_tasks()]
-        self.store_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
 
     def create(
         self,
@@ -147,29 +154,44 @@ class TaskScheduler:
         gateway: str = "",
         gateway_user: str = "",
         metadata: dict[str, Any] | None = None,
+        auto_run: bool = True,
+        scheduled_at: str = "",
+        priority: int = 0,
+        max_attempts: int | None = None,
+        idempotency_key: str = "",
+        agent_id: str = "",
+        source: str = "api",
     ) -> Task:
-        task = Task(
-            id=uuid.uuid4().hex[:12],
-            title=title,
-            prompt=prompt,
-            thread_id=uuid.uuid4().hex[:16],
+        meta = metadata or {}
+        resolved_agent = agent_id or str(meta.get("agent_id") or settings.default_agent_id)
+        snapshot = self._service.capture_run_snapshot(resolved_agent)
+        record = self._service.create(
+            title,
+            prompt,
             gateway=gateway,
             gateway_user=gateway_user,
-            metadata=metadata or {},
+            metadata=meta,
+            auto_run=auto_run,
+            agent_id=resolved_agent,
+            scheduled_at=scheduled_at,
+            priority=priority,
+            max_attempts=max_attempts,
+            idempotency_key=idempotency_key,
+            run_snapshot=snapshot,
+            source=source,
         )
-        self._tasks[task.id] = task
-        self._save()
-        emit_event(EventType.TODO_UPDATE, {"action": "create", "task_id": task.id, "title": title})
-        return task
+        return Task.from_record(record)
 
     def get(self, task_id: str) -> Task | None:
-        return self._tasks.get(task_id)
+        record = self._service.get(task_id)
+        return Task.from_record(record) if record else None
 
     def list_tasks(self, status: TaskStatus | None = None) -> list[Task]:
-        tasks = list(self._tasks.values())
-        if status:
-            tasks = [t for t in tasks if t.status == status]
-        return sorted(tasks, key=lambda t: t.created_at, reverse=True)
+        queue_status = status.to_queue().value if status else None
+        if status == TaskStatus.PENDING:
+            queue_status = QueueStatus.QUEUED.value
+        records = self._service.list_tasks(queue_status)
+        return [Task.from_record(record) for record in records]
 
     def update_status(
         self,
@@ -182,39 +204,17 @@ class TaskScheduler:
         trace_id: str = "",
         run_id: str = "",
     ) -> Task | None:
-        task = self._tasks.get(task_id)
-        if not task:
-            return None
-        if expected is not None and task.status not in expected:
-            return None
-        if task.status != status and status not in _TASK_TRANSITIONS.get(task.status, set()):
-            return None
-        previous = task.status
-        task.status = status
-        task.updated_at = datetime.now(timezone.utc).isoformat()
-        if result:
-            task.result = result
-        if error:
-            task.error = error
-        if trace_id:
-            task.trace_id = trace_id
-        if run_id:
-            task.run_id = run_id
-        self._save()
-        if previous != status:
-            emit_event(
-                EventType.RUN_STATUS,
-                {
-                    "task_id": task.id,
-                    "thread_id": task.thread_id,
-                    "agent_id": str(task.metadata.get("agent_id", "default")),
-                    "previous_status": previous.value,
-                    "status": status.value,
-                },
-                trace_id=task.trace_id or None,
-                run_id=task.run_id or None,
-            )
-        return task
+        expected_queue = {item.to_queue() for item in expected} if expected else None
+        record = self._service.update_status(
+            task_id,
+            status.to_queue(),
+            expected=expected_queue,
+            result=result,
+            error=error,
+            trace_id=trace_id,
+            run_id=run_id,
+        )
+        return Task.from_record(record) if record else None
 
 
 task_scheduler = TaskScheduler()

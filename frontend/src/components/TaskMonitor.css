@@ -236,3 +236,51 @@
 }
 
 .spin { animation: spin 1s linear infinite; }
+
+.queue-stats-bar {
+  display: flex;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.sse-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+.sse-indicator.online { color: var(--success, #22c55e); }
+.sse-indicator.offline { color: var(--text-muted, #94a3b8); }
+
+.create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.attempt-timeline,
+.event-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.timeline-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  font-size: 12px;
+}
+
+.retry-countdown {
+  color: var(--warning, #f59e0b);
+  font-size: 12px;
+  margin: 8px 0;
+}

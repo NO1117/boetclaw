@@ -120,6 +120,67 @@ export interface Task {
   gateway: string
   created_at: string
   updated_at: string
+  metadata?: Record<string, unknown>
+  revision?: number
+  scheduled_at?: string
+  priority?: number
+  attempt_count?: number
+  max_attempts?: number
+  retry_after?: string
+  agent_id?: string
+  source?: string
+  run_snapshot?: Record<string, unknown>
+}
+
+export interface TaskAttempt {
+  id: number
+  task_id: string
+  attempt_number: number
+  status: string
+  worker_id?: string
+  run_id?: string
+  trace_id?: string
+  thread_id?: string
+  result_summary?: string
+  error_summary?: string
+  error_category?: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+}
+
+export interface TaskEvent {
+  id: number
+  task_id: string
+  event_type: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface TaskQueueStats {
+  queue_depth: number
+  status_counts: Record<string, number>
+  dead_letter_count: number
+  retry_total: number
+  lease_reclaimed_total: number
+  paused: boolean
+}
+
+export interface TaskListResponse {
+  items: Task[]
+  next_cursor: string | null
+}
+
+export interface CreateTaskInput {
+  title: string
+  prompt: string
+  auto_run?: boolean
+  scheduled_at?: string
+  priority?: number
+  agent_id?: string
+  max_attempts?: number
+  idempotency_key?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface ToolInfo {
@@ -793,17 +854,103 @@ export async function fetchTasks(status?: string): Promise<Task[]> {
   return res.json()
 }
 
+export async function fetchTasksPaged(params: {
+  status?: string
+  agent_id?: string
+  source?: string
+  q?: string
+  cursor?: string
+  limit?: number
+} = {}): Promise<TaskListResponse> {
+  const query = new URLSearchParams()
+  if (params.status) query.set('status', params.status)
+  if (params.agent_id) query.set('agent_id', params.agent_id)
+  if (params.source) query.set('source', params.source)
+  if (params.q) query.set('q', params.q)
+  if (params.cursor) query.set('cursor', params.cursor)
+  if (params.limit) query.set('limit', String(params.limit))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await fetch(`${API_BASE}/tasks/list${suffix}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchTaskQueueStats(): Promise<TaskQueueStats> {
+  const res = await fetch(`${API_BASE}/tasks/stats`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function controlTaskQueue(paused: boolean): Promise<TaskQueueStats> {
+  const res = await fetch(`${API_BASE}/tasks/queue/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paused }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function fetchTask(taskId: string): Promise<Task> {
   const res = await fetch(`${API_BASE}/tasks/${taskId}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
+export async function fetchTaskAttempts(taskId: string): Promise<TaskAttempt[]> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/attempts`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchTaskEvents(taskId: string, afterId = 0): Promise<TaskEvent[]> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/events?after_id=${afterId}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function openTaskEventsStream(options: {
+  taskId?: string
+  afterId?: number
+  onEvent: (event: TaskEvent) => void
+  onReset?: (reason: string) => void
+  onConnectionChange?: (connected: boolean) => void
+}): () => void {
+  const params = new URLSearchParams()
+  if (options.taskId) params.set('task_id', options.taskId)
+  if (options.afterId) params.set('after_id', String(options.afterId))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const source = new EventSource(`${API_BASE}/tasks/events/stream${suffix}`)
+  source.addEventListener('open', () => options.onConnectionChange?.(true))
+  source.addEventListener('error', () => options.onConnectionChange?.(false))
+  source.addEventListener('task', (evt) => {
+    try {
+      const data = JSON.parse((evt as MessageEvent).data) as TaskEvent
+      options.onEvent(data)
+    } catch {
+      // ignore malformed events
+    }
+  })
+  source.addEventListener('reset', (evt) => {
+    try {
+      const data = JSON.parse((evt as MessageEvent).data) as { reason?: string }
+      options.onReset?.(data.reason || 'cursor_too_old')
+    } catch {
+      options.onReset?.('cursor_too_old')
+    }
+  })
+  return () => source.close()
+}
+
 export async function createTask(title: string, prompt: string): Promise<Task> {
+  return createTaskAdvanced({ title, prompt, auto_run: true })
+}
+
+export async function createTaskAdvanced(input: CreateTaskInput): Promise<Task> {
   const res = await fetch(`${API_BASE}/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, prompt, auto_run: true }),
+    body: JSON.stringify(input),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
@@ -817,6 +964,12 @@ export async function runTask(taskId: string): Promise<Task> {
 
 export async function cancelTask(taskId: string): Promise<Task> {
   const res = await fetch(`${API_BASE}/tasks/${taskId}/cancel`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function requeueTask(taskId: string): Promise<Task> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/requeue`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

@@ -44,9 +44,12 @@ import {
   fetchGuardConfig,
   fetchStats,
   fetchTask,
+  fetchTaskAttempts,
+  fetchTaskEvents,
   fetchTraceTimeline,
   loginConsole,
   logoutConsole,
+  requeueTask,
   runTask,
   updateGuardConfig,
   type ApprovalRequest,
@@ -78,7 +81,7 @@ const NAV_ITEMS: {
   icon: typeof MessageSquare
 }[] = [
   { path: '/chat', label: '对话工作台', match: ['chat'], icon: MessageSquare },
-  { path: '/tasks', label: '任务与追踪', match: ['tasks', 'trace'], icon: ListTodo },
+  { path: '/tasks', label: '运行中心', match: ['tasks', 'trace'], icon: ListTodo },
   { path: '/agents', label: 'Agent 工作区', match: ['agents'], icon: Bot },
   { path: '/knowledge', label: '知识库', match: ['knowledge'], icon: BookOpen },
   { path: '/settings/skills', label: '设置', match: ['settings'], icon: Settings },
@@ -96,7 +99,7 @@ function routeTitle(route: AppRoute): string {
     case 'chat':
       return '对话工作台'
     case 'tasks':
-      return route.taskId ? `任务 ${route.taskId}` : '任务与追踪'
+      return route.taskId ? `任务 ${route.taskId}` : '运行中心'
     case 'agents':
       return 'Agent 工作区'
     case 'knowledge':
@@ -433,7 +436,7 @@ export default function App() {
         <main className="route-main">
           <PageHeader
             icon={<ListTodo size={18} />}
-            title={route.taskId ? `任务 ${route.taskId}` : '任务与追踪'}
+            title={route.taskId ? `任务 ${route.taskId}` : '运行中心'}
             description="查看、创建、筛选并管理 Agent 后台任务；可从任务详情重跑、取消或跳转到关联 Trace。"
           />
           <div className="route-grid two-columns tasks-layout">
@@ -931,16 +934,75 @@ function TaskDetailContent({
   onTrace: (traceId: string) => void
   onClose: () => void
 }) {
-  const [busy, setBusy] = useState<'run' | 'cancel' | ''>('')
+  const [busy, setBusy] = useState<'run' | 'cancel' | 'requeue' | ''>('')
   const [actionError, setActionError] = useState('')
-  const canCancel = task.status === 'pending' || task.status === 'running'
-  const canRun = task.status !== 'running'
+  const [attempts, setAttempts] = useState<Awaited<ReturnType<typeof fetchTaskAttempts>>>([])
+  const [events, setEvents] = useState<Awaited<ReturnType<typeof fetchTaskEvents>>>([])
+  const [retryCountdown, setRetryCountdown] = useState('')
+  const [confirmRerun, setConfirmRerun] = useState(false)
+
+  const canCancel = ['pending', 'queued', 'running', 'scheduled', 'retry_wait', 'leased'].includes(task.status)
+  const canRun = !['running', 'leased', 'cancelling'].includes(task.status)
+  const canRequeue = ['failed', 'dead_letter', 'interrupted'].includes(task.status)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [attemptRows, eventRows] = await Promise.all([
+          fetchTaskAttempts(task.id),
+          fetchTaskEvents(task.id),
+        ])
+        setAttempts(attemptRows)
+        setEvents(eventRows)
+      } catch {
+        setAttempts([])
+        setEvents([])
+      }
+    }
+    void load()
+  }, [task.id, task.updated_at])
+
+  useEffect(() => {
+    if (task.status !== 'retry_wait' || !task.retry_after) {
+      setRetryCountdown('')
+      return
+    }
+    const tick = () => {
+      const remain = Date.parse(task.retry_after || '') - Date.now()
+      if (remain <= 0) {
+        setRetryCountdown('即将重试')
+        return
+      }
+      const sec = Math.ceil(remain / 1000)
+      setRetryCountdown(`${sec}s 后重试`)
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [task.retry_after, task.status])
 
   const handleRun = async () => {
+    if (!confirmRerun && ['completed', 'failed', 'interrupted'].includes(task.status)) {
+      setConfirmRerun(true)
+      return
+    }
     setBusy('run')
     setActionError('')
     try {
       onTaskUpdate(await runTask(task.id))
+      setConfirmRerun(false)
+    } catch (e) {
+      setActionError(String(e))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const handleRequeue = async () => {
+    setBusy('requeue')
+    setActionError('')
+    try {
+      onTaskUpdate(await requeueTask(task.id))
     } catch (e) {
       setActionError(String(e))
     } finally {
@@ -966,12 +1028,19 @@ function TaskDetailContent({
       <div className="detail-meta">
         <span className={`badge ${task.status}`}>{task.status}</span>
         <span>ID: {task.id}</span>
+        {task.agent_id && <span className="badge gateway">{task.agent_id}</span>}
         {task.gateway && <span className="badge gateway">{task.gateway}</span>}
       </div>
+      {retryCountdown && <div className="retry-countdown">{retryCountdown}</div>}
       <div className="detail-actions">
         <button className="action-btn primary" disabled={!canRun || !!busy} onClick={() => void handleRun()}>
-          {busy === 'run' ? '提交中...' : '重跑'}
+          {busy === 'run' ? '提交中...' : confirmRerun ? '确认重跑' : '重跑'}
         </button>
+        {canRequeue && (
+          <button className="action-btn" disabled={!!busy} onClick={() => void handleRequeue()}>
+            {busy === 'requeue' ? '入队中...' : '重新入队'}
+          </button>
+        )}
         <button className="action-btn danger" disabled={!canCancel || !!busy} onClick={() => void handleCancel()}>
           {busy === 'cancel' ? '取消中...' : '取消'}
         </button>
@@ -982,7 +1051,16 @@ function TaskDetailContent({
         )}
         <button className="action-btn" onClick={onClose}>关闭</button>
       </div>
+      {!canRun && !canRequeue && task.status === 'completed' && (
+        <p className="empty-hint">任务已完成，重跑将创建新的执行尝试。</p>
+      )}
       {actionError && <div className="detail-action-error">{actionError}</div>}
+      {task.run_snapshot && Object.keys(task.run_snapshot).length > 0 && (
+        <div className="detail-section">
+          <label>运行快照</label>
+          <pre>{JSON.stringify(task.run_snapshot, null, 2)}</pre>
+        </div>
+      )}
       <div className="detail-section">
         <label>Prompt</label>
         <pre>{task.prompt}</pre>
@@ -999,9 +1077,35 @@ function TaskDetailContent({
           <pre>{task.error}</pre>
         </div>
       )}
+      {attempts.length > 0 && (
+        <div className="detail-section">
+          <label>执行尝试 ({attempts.length})</label>
+          <div className="attempt-timeline">
+            {attempts.map(attempt => (
+              <div key={attempt.id} className="timeline-item">
+                <strong>#{attempt.attempt_number}</strong> {attempt.status}
+                {attempt.duration_ms ? ` · ${attempt.duration_ms}ms` : ''}
+                {attempt.error_summary ? ` · ${attempt.error_summary}` : ''}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {events.length > 0 && (
+        <div className="detail-section">
+          <label>状态时间线</label>
+          <div className="event-timeline">
+            {events.map(event => (
+              <div key={event.id} className="timeline-item">
+                {new Date(event.created_at).toLocaleString('zh-CN')} · {event.event_type}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="detail-section">
         <label>时间</label>
-        <pre>{`created: ${new Date(task.created_at).toLocaleString('zh-CN')}\nupdated: ${new Date(task.updated_at).toLocaleString('zh-CN')}`}</pre>
+        <pre>{`created: ${new Date(task.created_at).toLocaleString('zh-CN')}\nupdated: ${new Date(task.updated_at).toLocaleString('zh-CN')}${task.scheduled_at ? `\nscheduled: ${new Date(task.scheduled_at).toLocaleString('zh-CN')}` : ''}`}</pre>
       </div>
     </>
   )

@@ -61,7 +61,8 @@
 | `test_phase17_agent_index.py` | 1 | Agent 文件索引和历史 |
 | `test_phase17_artifact_meta.py` | 1 | 生成代码 sidecar 元数据 |
 | `test_phase23_api_security.py` | 5 | API Token、健康检查豁免、API 限流、Console JWT |
-| `test_phase24_task_persistence.py` | 2 | 任务持久化、重启后运行中任务恢复为失败 |
+| `test_phase24_task_persistence.py` | 2 | 任务 SQLite 持久化、重启后 running → interrupted |
+| `test_durable_task_queue.py` | 11 | 迁移幂等、租约、并发、重试分类、dead-letter、分页、脱敏、竞态 |
 | `test_phase25_gateway_access_control.py` | 4 | 渠道白名单持久化、允许/拒绝、用户限流 |
 | `test_plan100_execution_ref.py` | 10 | ExecutionRef、Interrupt 解析、错误 ref、审批顺序、适配器校验失败审计、旧 JSON、fail-closed、恢复语义隔离 |
 | `test_plan110_checkpoint.py` | 11 | SQLite provider/Agent 重建恢复、每 Agent DB 隔离、memory 降级、生命周期、interrupt 校验与审批重启策略 |

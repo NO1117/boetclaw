@@ -241,7 +241,8 @@ BOETCLAW_MASTER_KEY=
 ## 其他边界与生产要求
 
 - `source="cron"` 和 `source="heartbeat"` 默认不写长期记忆，可降低自动任务污染，但不是内容安全过滤。
-- `backend/.env`、workspace 中的审批/消息/任务历史、`workspace/credentials/` 与 provider 连接配置都应按敏感数据保护。
+- 任务结果、错误、事件与运行快照经脱敏截断后写入 SQLite；API Key、凭据与完整知识库正文不得进入任务表。
+- `backend/.env`、workspace 中的审批/消息/任务队列与历史、`workspace/credentials/` 与 provider 连接配置都应按敏感数据保护。
 - 收紧 `CORS_ORIGINS`，不要保留不需要的开发源。
 - 对外仅暴露必要路径；限制 `/docs`、`/openapi.json`、管理 API 和 `/ui/` 的访问。
 - 保持 `TOOL_GUARD_ENABLED=true`，不要把 `off` 用于生产。

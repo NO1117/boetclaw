@@ -90,17 +90,25 @@
 | `POST` | `/api/v1/auth/login` | Console 密码登录 | `{password}` → `{login_required,authenticated,token,expires_in_minutes}`，并写 HttpOnly cookie；错误密码 401 | FUN-066 |
 | `POST` | `/api/v1/auth/logout` | 清理 Console cookie | → `{authenticated:false}` | FUN-066 |
 
-## 4. 后台任务
+## 4. 后台任务（持久化队列）
 
 | 方法 | 完整路径 | 用途 | 主要请求/响应 | 功能 |
 |---|---|---|---|---|
-| `POST` | `/api/v1/tasks` | 创建任务并可自动运行 | `TaskCreateRequest` → `TaskResponse` | FUN-080 |
-| `GET` | `/api/v1/tasks` | 任务列表 | query `status?=pending|running|cancelling|completed|failed|cancelled` → `TaskResponse[]` | FUN-080 |
-| `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | → `TaskResponse`；不存在 404 | FUN-080 |
-| `POST` | `/api/v1/tasks/{task_id}/run` | 重跑任务 | 无 body → 当前 `TaskResponse`；运行中 409 | FUN-081 |
-| `POST` | `/api/v1/tasks/{task_id}/cancel` | 取消底层协程并等待确认 | 无 body → cancelled `TaskResponse`；重复取消幂等，completed/failed 返回 409 | FUN-082 |
+| `POST` | `/api/v1/tasks` | 创建任务；支持计划时间、优先级、幂等键 | `TaskCreateRequest` → `TaskResponse`（201）；幂等重复返回已有任务 | FUN-080 |
+| `GET` | `/api/v1/tasks` | 兼容旧列表 | query `status`（`pending` 映射 `queued`）→ `TaskResponse[]` | FUN-080 |
+| `GET` | `/api/v1/tasks/list` | 分页筛选列表 | cursor/agent/source/q/时间范围 → `{items,next_cursor}` | FUN-080 |
+| `GET` | `/api/v1/tasks/stats` | 队列统计 | → `TaskQueueStatsResponse` | FUN-122 |
+| `POST` | `/api/v1/tasks/queue/control` | 暂停/恢复领取 | `{paused}` → stats | FUN-080 |
+| `GET` | `/api/v1/tasks/events/stream` | SSE 任务事件 | `after_id` 续传；过旧游标 `reset` | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}` | 任务详情 | → `TaskResponse`；404 | FUN-080 |
+| `PATCH` | `/api/v1/tasks/{task_id}` | 更新未运行任务 | revision 乐观锁；409 冲突 | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}/attempts` | 尝试历史 | → `TaskAttemptResponse[]` | FUN-080 |
+| `GET` | `/api/v1/tasks/{task_id}/events` | 状态事件 | → `TaskEventResponse[]` | FUN-080 |
+| `POST` | `/api/v1/tasks/{task_id}/run` | 重跑 | 运行中 409 | FUN-081 |
+| `POST` | `/api/v1/tasks/{task_id}/cancel` | 取消 | 幂等；终态 409 | FUN-082 |
+| `POST` | `/api/v1/tasks/{task_id}/requeue` | dead-letter 人工入队 | 保留原尝试链 | FUN-080 |
 
-任务运行使用单进程 `RunRegistry`；pending/running/cancelling/cancelled/completed/failed 转换受限，cancelled 不会被完成/失败回写覆盖。注册表不提供跨进程、多副本或服务重启后的活动运行取消。
+SQLite WAL 持久化（`workspace/tasks/task_queue.sqlite3`）；启动幂等迁移 `task_history.json`（保留原文件）。Worker 单实例租约领取；重启后 `running/leased` → `interrupted`。并发：全局/Agent/Provider 连接限额；结果/错误脱敏截断。
 
 ## 5. Cron 与 Heartbeat
 

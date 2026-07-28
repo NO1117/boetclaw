@@ -62,9 +62,11 @@ async def lifespan(app: FastAPI):
             await task
         from app.services.cron_service import cron_service
         from app.services.run_registry import run_registry
+        from app.services.task_scheduler import task_scheduler
 
         await agent_idle_eviction_service.stop()
         cron_service.shutdown()
+        await task_scheduler.service.stop_worker()
         await run_registry.shutdown()
         await channel_manager.stop()
         await mcp_manager.disconnect()
